@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "simulate": "tsx scripts/simulate.ts",
+    "simulate:csv": "tsx scripts/simulate.ts --csv",
+    "simulate:seed": "tsx scripts/simulate.ts --seed"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
@@ -27,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
+    "tsx": "^4.22.4",
     "typescript": "^5",
     "vitest": "^4.1.9"
   }
