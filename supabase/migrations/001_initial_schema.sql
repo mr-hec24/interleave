@@ -77,12 +77,16 @@ create policy "Users manage own recommendations" on recommendations for all usin
 
 -- Auto-create profile on signup
 create or replace function handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
-  insert into profiles (id) values (new.id);
+  insert into public.profiles (id) values (new.id);
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 create trigger on_auth_user_created
   after insert on auth.users
@@ -90,12 +94,16 @@ create trigger on_auth_user_created
 
 -- Auto-create sr_state when a skill is created
 create or replace function handle_new_skill()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
-  insert into sr_state (skill_id) values (new.id);
+  insert into public.sr_state (skill_id) values (new.id);
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 create trigger on_skill_created
   after insert on skills
