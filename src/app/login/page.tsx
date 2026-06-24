@@ -21,7 +21,7 @@ export default function LoginPage() {
     if (isSignUp) {
       const { error } = await supabase.auth.signUp({ email, password });
       if (error) {
-        setError(error.message);
+        setError(error.message || `Signup failed (${error.status})`);
       } else {
         setMessage("Check your email to confirm your account.");
       }
@@ -31,7 +31,7 @@ export default function LoginPage() {
         password,
       });
       if (error) {
-        setError(error.message);
+        setError(error.message || `Sign-in failed (${error.status})`);
       } else {
         router.push("/");
         router.refresh();
