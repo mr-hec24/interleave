@@ -74,7 +74,8 @@ export default function Dashboard({
 
     const { data: newSessions } = await supabase
       .from("sessions")
-      .select("*, skills(name)")
+      .select("*, skills!inner(name)")
+      .is("skills.archived_at", null)
       .order("created_at", { ascending: false })
       .limit(10);
 
