@@ -109,6 +109,16 @@ functions as a retrieval event (testing effect) and feeds SM-2. Its
 subjectivity is a known limitation, mitigated by the append-only log (§5) which
 preserves the raw ratings for later recalibration.
 
+**Why skills must be narrowly scoped.** A single 0–5 recall rating is only a
+coherent signal if it describes one well-defined thing. "Guitar" cannot be rated
+as a single number; "blues scale in A" can. The skill- and session-entry forms
+therefore include explicit scoping guidance (✗ Guitar → ✓ Blues scale in A;
+✗ French → ✓ Passé composé conjugation) steering learners away from broad goals
+toward atomic skills. This is not a UX nicety — it is a measurement requirement.
+The scheduler needs *one forgetting curve per skill*; a broad "skill" would
+blend several curves into one meaningless number. Broad goals are instead
+represented as **Topics** (§4.1), which group many atomic skills.
+
 ## 4. The Interleaving Scheduler
 
 The scheduler estimates, per skill, the **retrievability** — the probability of
@@ -134,6 +144,36 @@ cross-domain interleaving emerges — not as an arbitrary rotation, but as a
 spacing-driven consequence of each skill's individual decay. Switching becomes
 **earned and trustworthy** rather than arbitrary.
 
+### 4.1 Topics: an organizational layer (and a research lever)
+
+Atomic skills (§3) keep the measurement honest but proliferate quickly — a
+language learner may have a dozen narrow skills. **Topics** group related skills
+(e.g. a "French" topic holding passé composé, numbers, and pronunciation
+skills) purely for organization. A topic carries a name, description, and a
+free-text **notes/syllabus** field.
+
+Crucially, topics are **organizational only** in Phase 1: they do not affect
+SM-2 or the scheduler. Each skill is still scheduled independently by its own
+retrievability. This keeps the decision layer clean while taming UI clutter.
+
+But the topic structure is also a deliberate **research lever**. Because every
+skill now carries a topic membership, the scheduler can later offer two modes
+that map directly onto the competing mechanisms in §2.1:
+
+- **Within-topic interleaving** — prefer the next skill from the *same* topic as
+  the last (e.g. passé composé → numbers → subjunctive). High inter-item
+  similarity; the **discriminative-contrast** mechanism (Brunmair & Richter,
+  2019; Kornell & Bjork, 2008) should be active.
+- **Across-topic interleaving** — prefer the next skill from a *different* topic
+  (e.g. passé composé → blues scale → backprop). Low similarity; discrimination
+  drops out, leaving **spacing and contextual interference** as the only
+  plausible benefit.
+
+This turns a routine product setting into a within-subjects manipulation of the
+exact theoretical question the project is built around — without requiring a
+separate study apparatus. The `topic_id` on each skill is already the data this
+would need; only the scheduler's selection rule would change (see §6).
+
 ## 5. Design for Trust
 
 **Visible reasoning.** The dashboard shows the actual numbers behind every
@@ -155,6 +195,15 @@ replaying the log. This preserves the raw observation sequence — exactly what 
 future individualized BKT model (Phase 2) would need — without re-collecting
 data, and lets any scheduling parameter be re-evaluated retrospectively.
 
+**Edit and removal preserve history.** Skills and topics can be edited freely.
+Removal is a *soft archive* (`archived_at`), never a hard delete: archived
+skills and topics drop out of the dashboard, recommendations, and the recent-
+sessions view, but their rows — and every session logged against them — remain
+in the database. Removing a topic leaves its skills intact but ungrouped. This
+is the same principle as the append-only log applied to the entity layer: the
+research record is never destroyed by routine product actions, so a learner
+tidying their dashboard cannot silently corrupt the dataset.
+
 ## 6. Open Questions & Future Work
 
 This product makes **design** claims grounded in literature, not **efficacy**
@@ -166,6 +215,14 @@ claims grounded in its own data. The honest open questions:
   A future within-subjects study (some of a learner's skills scheduled by the
   app, others self-scheduled, comparing recall at matched delays) could test it
   — contingent on appropriate ethics review.
+- **Within-topic vs. across-topic interleaving (the mechanism test).** The
+  topic structure (§4.1) enables a scheduler mode toggle that pits
+  discriminative contrast (within-topic, high similarity) against spacing /
+  contextual interference (across-topic, low similarity) — a within-subjects
+  manipulation of the central theoretical question from §2.1. Implementation is
+  small: the scheduler's selection rule gains a mode that biases toward or away
+  from the last-practiced skill's topic; the `topic_id` data already exists.
+  This is the most direct empirical pipeline the product opens up.
 - **Is self-reported 0–5 recall well-calibrated?** The append-only log enables
   retrospective calibration against later performance.
 - **Phase 2 — individualized BKT.** Once enough per-user session history
