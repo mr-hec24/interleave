@@ -9,6 +9,12 @@ interface ExistingSkill {
   name: string;
   description: string | null;
   default_session_minutes: number;
+  topic_id?: string | null;
+}
+
+interface TopicOption {
+  id: string;
+  name: string;
 }
 
 interface Props {
@@ -16,13 +22,26 @@ interface Props {
   onCancel: () => void;
   /** When provided, the form edits this skill instead of creating a new one. */
   skill?: ExistingSkill;
+  /** Topics the skill can be assigned to. */
+  topics?: TopicOption[];
+  /** Pre-select this topic when creating a new skill. */
+  defaultTopicId?: string | null;
 }
 
-export default function SkillForm({ onCreated, onCancel, skill }: Props) {
+export default function SkillForm({
+  onCreated,
+  onCancel,
+  skill,
+  topics = [],
+  defaultTopicId = null,
+}: Props) {
   const isEditing = !!skill;
   const [name, setName] = useState(skill?.name ?? "");
   const [description, setDescription] = useState(skill?.description ?? "");
   const [minutes, setMinutes] = useState(skill?.default_session_minutes ?? 25);
+  const [topicId, setTopicId] = useState<string | null>(
+    skill?.topic_id ?? defaultTopicId
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const supabase = createClient();
@@ -46,6 +65,7 @@ export default function SkillForm({ onCreated, onCancel, skill }: Props) {
       name: name.trim(),
       description: description.trim() || null,
       default_session_minutes: minutes,
+      topic_id: topicId,
     };
 
     const { error: writeError } = isEditing
@@ -81,6 +101,23 @@ export default function SkillForm({ onCreated, onCancel, skill }: Props) {
         onChange={(e) => setDescription(e.target.value)}
         className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 placeholder-gray-400"
       />
+      {topics.length > 0 && (
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-600">Topic:</label>
+          <select
+            value={topicId ?? ""}
+            onChange={(e) => setTopicId(e.target.value || null)}
+            className="px-2 py-1 border border-gray-300 rounded-md text-sm text-gray-900"
+          >
+            <option value="">No topic</option>
+            {topics.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <label className="text-sm text-gray-600">Default session:</label>
         <input

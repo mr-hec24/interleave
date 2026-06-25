@@ -18,6 +18,12 @@ export default async function Home() {
     .is("archived_at", null)
     .order("created_at", { ascending: true });
 
+  const { data: topics } = await supabase
+    .from("topics")
+    .select("*")
+    .is("archived_at", null)
+    .order("created_at", { ascending: true });
+
   const { data: recentSessions } = await supabase
     .from("sessions")
     .select("*, skills!inner(name)")
@@ -29,6 +35,7 @@ export default async function Home() {
     <Dashboard
       user={user}
       skills={skills ?? []}
+      topics={topics ?? []}
       recentSessions={recentSessions ?? []}
     />
   );

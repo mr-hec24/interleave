@@ -171,6 +171,16 @@ claims grounded in its own data. The honest open questions:
 - **Phase 2 — individualized BKT.** Once enough per-user session history
   accumulates, fit a personal forgetting model rather than relying on SM-2's
   fixed assumptions.
+- **Phase 2 — Claude-suggested skills from a topic syllabus.** Topics carry an
+  optional notes/syllabus field. A future feature would let Claude read that
+  syllabus and *suggest* well-scoped skills to add (e.g. read a French syllabus,
+  propose "passé composé conjugation," "numbers 1–100"). This stays inside the
+  trust boundary (§5): Claude *advises* on curriculum, the learner explicitly
+  adds each skill, and the scheduler still decides *when* to practice via
+  deterministic math. The known limitation — flagged for honesty — is that the
+  suggestions are only as good as the syllabus/notes fed in; garbage in,
+  garbage out. Surfacing *that* uncertainty to the user (rather than presenting
+  suggestions as authoritative) is part of the design problem to solve.
 - **The trust metric.** Recommendation *acceptance rate* (how often learners
   follow the suggested switch) is a usable proxy for whether the visible-
   reasoning design earns trust in practice.

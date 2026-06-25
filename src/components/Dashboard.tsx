@@ -7,6 +7,7 @@ import { rankSkills, formatReasonText } from "@/lib/scheduler";
 import type { SchedulerRecommendation } from "@/lib/scheduler";
 import SkillForm from "./SkillForm";
 import SessionForm from "./SessionForm";
+import TopicForm from "./TopicForm";
 import RecommendationCard from "./RecommendationCard";
 
 interface Skill {
@@ -14,6 +15,7 @@ interface Skill {
   name: string;
   description: string | null;
   default_session_minutes: number;
+  topic_id: string | null;
   sr_state: {
     repetitions: number;
     ease_factor: number;
@@ -21,6 +23,13 @@ interface Skill {
     last_reviewed_at: string | null;
     due_at: string | null;
   } | null;
+}
+
+interface Topic {
+  id: string;
+  name: string;
+  description: string | null;
+  notes: string | null;
 }
 
 interface Session {
@@ -35,20 +44,28 @@ interface Session {
 interface DashboardProps {
   user: User;
   skills: Skill[];
+  topics: Topic[];
   recentSessions: Session[];
 }
 
 export default function Dashboard({
   user,
   skills: initialSkills,
+  topics: initialTopics,
   recentSessions: initialSessions,
 }: DashboardProps) {
   const [skills, setSkills] = useState(initialSkills);
+  const [topics, setTopics] = useState(initialTopics);
   const [sessions, setSessions] = useState(initialSessions);
   const [showSkillForm, setShowSkillForm] = useState(false);
+  const [skillFormTopicId, setSkillFormTopicId] = useState<string | null>(null);
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
+  const [showTopicForm, setShowTopicForm] = useState(false);
+  const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [loggingSkillId, setLoggingSkillId] = useState<string | null>(null);
   const supabase = createClient();
+
+  const topicOptions = topics.map((t) => ({ id: t.id, name: t.name }));
 
   const recommendations: SchedulerRecommendation[] = rankSkills(
     skills.map((s) => ({
@@ -72,6 +89,12 @@ export default function Dashboard({
       .is("archived_at", null)
       .order("created_at", { ascending: true });
 
+    const { data: newTopics } = await supabase
+      .from("topics")
+      .select("*")
+      .is("archived_at", null)
+      .order("created_at", { ascending: true });
+
     const { data: newSessions } = await supabase
       .from("sessions")
       .select("*, skills!inner(name)")
@@ -80,6 +103,7 @@ export default function Dashboard({
       .limit(10);
 
     if (newSkills) setSkills(newSkills);
+    if (newTopics) setTopics(newTopics);
     if (newSessions) setSessions(newSessions);
   }, [supabase]);
 
@@ -100,9 +124,93 @@ export default function Dashboard({
     [supabase, refreshData]
   );
 
+  const handleRemoveTopic = useCallback(
+    async (topic: Topic) => {
+      const confirmed = window.confirm(
+        `Remove topic "${topic.name}"? Its skills are kept but become ` +
+          `ungrouped. Your logged sessions are kept.`
+      );
+      if (!confirmed) return;
+
+      await supabase
+        .from("topics")
+        .update({ archived_at: new Date().toISOString() })
+        .eq("id", topic.id);
+      refreshData();
+    },
+    [supabase, refreshData]
+  );
+
   async function handleSignOut() {
     await supabase.auth.signOut();
     window.location.href = "/login";
+  }
+
+  function renderSkill(skill: Skill) {
+    if (editingSkillId === skill.id) {
+      return (
+        <SkillForm
+          key={skill.id}
+          skill={{
+            id: skill.id,
+            name: skill.name,
+            description: skill.description,
+            default_session_minutes: skill.default_session_minutes,
+            topic_id: skill.topic_id,
+          }}
+          topics={topicOptions}
+          onCreated={() => {
+            setEditingSkillId(null);
+            refreshData();
+          }}
+          onCancel={() => setEditingSkillId(null)}
+        />
+      );
+    }
+
+    return (
+      <div
+        key={skill.id}
+        className="bg-white rounded-lg border border-gray-200 p-4 flex items-center justify-between"
+      >
+        <div>
+          <p className="font-medium text-gray-900 text-sm">{skill.name}</p>
+          {skill.description && (
+            <p className="text-xs text-gray-500 mt-0.5">{skill.description}</p>
+          )}
+          <div className="flex gap-3 mt-1 text-xs text-gray-400">
+            <span>Interval: {skill.sr_state?.interval_days ?? 0}d</span>
+            <span>EF: {skill.sr_state?.ease_factor ?? "2.50"}</span>
+            <span>Reps: {skill.sr_state?.repetitions ?? 0}</span>
+            {skill.sr_state?.due_at && (
+              <span>
+                Due: {new Date(skill.sr_state.due_at).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEditingSkillId(skill.id)}
+            className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-3 py-1.5"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => handleRemoveSkill(skill)}
+            className="text-xs text-gray-400 hover:text-red-600 border border-gray-200 rounded px-3 py-1.5"
+          >
+            Remove
+          </button>
+          <button
+            onClick={() => setLoggingSkillId(skill.id)}
+            className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-3 py-1.5"
+          >
+            Log session
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -131,20 +239,43 @@ export default function Dashboard({
           />
         )}
 
-        {/* Skills */}
+        {/* Skills, grouped by topic */}
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-gray-900">Skills</h2>
-            <button
-              onClick={() => setShowSkillForm(true)}
-              className="text-sm text-gray-600 hover:text-gray-900"
-            >
-              + Add skill
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setShowTopicForm(true)}
+                className="text-sm text-gray-600 hover:text-gray-900"
+              >
+                + Add topic
+              </button>
+              <button
+                onClick={() => {
+                  setSkillFormTopicId(null);
+                  setShowSkillForm(true);
+                }}
+                className="text-sm text-gray-600 hover:text-gray-900"
+              >
+                + Add skill
+              </button>
+            </div>
           </div>
+
+          {showTopicForm && (
+            <TopicForm
+              onSaved={() => {
+                setShowTopicForm(false);
+                refreshData();
+              }}
+              onCancel={() => setShowTopicForm(false)}
+            />
+          )}
 
           {showSkillForm && (
             <SkillForm
+              topics={topicOptions}
+              defaultTopicId={skillFormTopicId}
               onCreated={() => {
                 setShowSkillForm(false);
                 refreshData();
@@ -153,83 +284,105 @@ export default function Dashboard({
             />
           )}
 
-          {skills.length === 0 && !showSkillForm ? (
+          {skills.length === 0 && topics.length === 0 && !showSkillForm ? (
             <p className="text-sm text-gray-400">
               No skills yet. Add one to get started.
             </p>
           ) : (
-            <div className="space-y-2">
-              {skills.map((skill) =>
-                editingSkillId === skill.id ? (
-                  <SkillForm
-                    key={skill.id}
-                    skill={{
-                      id: skill.id,
-                      name: skill.name,
-                      description: skill.description,
-                      default_session_minutes: skill.default_session_minutes,
-                    }}
-                    onCreated={() => {
-                      setEditingSkillId(null);
-                      refreshData();
-                    }}
-                    onCancel={() => setEditingSkillId(null)}
-                  />
-                ) : (
-                <div
-                  key={skill.id}
-                  className="bg-white rounded-lg border border-gray-200 p-4 flex items-center justify-between"
-                >
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">
-                      {skill.name}
-                    </p>
-                    {skill.description && (
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {skill.description}
+            <div className="space-y-6">
+              {/* Each topic group */}
+              {topics.map((topic) => {
+                const topicSkills = skills.filter(
+                  (s) => s.topic_id === topic.id
+                );
+                if (editingTopicId === topic.id) {
+                  return (
+                    <TopicForm
+                      key={topic.id}
+                      topic={topic}
+                      onSaved={() => {
+                        setEditingTopicId(null);
+                        refreshData();
+                      }}
+                      onCancel={() => setEditingTopicId(null)}
+                    />
+                  );
+                }
+                return (
+                  <div key={topic.id}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-800">
+                          {topic.name}
+                        </h3>
+                        {topic.description && (
+                          <p className="text-xs text-gray-500">
+                            {topic.description}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setSkillFormTopicId(topic.id);
+                            setShowSkillForm(true);
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-800"
+                        >
+                          + Skill
+                        </button>
+                        <button
+                          onClick={() => setEditingTopicId(topic.id)}
+                          className="text-xs text-gray-500 hover:text-gray-800"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleRemoveTopic(topic)}
+                          className="text-xs text-gray-400 hover:text-red-600"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                    {topic.notes && (
+                      <p className="text-xs text-gray-400 whitespace-pre-wrap mb-2 border-l-2 border-gray-200 pl-2">
+                        {topic.notes}
                       </p>
                     )}
-                    <div className="flex gap-3 mt-1 text-xs text-gray-400">
-                      <span>
-                        Interval: {skill.sr_state?.interval_days ?? 0}d
-                      </span>
-                      <span>
-                        EF: {skill.sr_state?.ease_factor ?? "2.50"}
-                      </span>
-                      <span>
-                        Reps: {skill.sr_state?.repetitions ?? 0}
-                      </span>
-                      {skill.sr_state?.due_at && (
-                        <span>
-                          Due:{" "}
-                          {new Date(skill.sr_state.due_at).toLocaleDateString()}
-                        </span>
-                      )}
+                    {topicSkills.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">
+                        No skills in this topic yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {topicSkills.map(renderSkill)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Ungrouped skills */}
+              {(() => {
+                const topicIds = new Set(topics.map((t) => t.id));
+                const ungrouped = skills.filter(
+                  (s) => !s.topic_id || !topicIds.has(s.topic_id)
+                );
+                if (ungrouped.length === 0) return null;
+                return (
+                  <div>
+                    {topics.length > 0 && (
+                      <h3 className="text-sm font-semibold text-gray-800 mb-2">
+                        Ungrouped
+                      </h3>
+                    )}
+                    <div className="space-y-2">
+                      {ungrouped.map(renderSkill)}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setEditingSkillId(skill.id)}
-                      className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-3 py-1.5"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleRemoveSkill(skill)}
-                      className="text-xs text-gray-400 hover:text-red-600 border border-gray-200 rounded px-3 py-1.5"
-                    >
-                      Remove
-                    </button>
-                    <button
-                      onClick={() => setLoggingSkillId(skill.id)}
-                      className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-3 py-1.5"
-                    >
-                      Log session
-                    </button>
-                  </div>
-                </div>
-                )
-              )}
+                );
+              })()}
             </div>
           )}
         </section>
