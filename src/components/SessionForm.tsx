@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { applySm2 } from "@/lib/sm2";
+import GrowingLeaf from "./GrowingLeaf";
 
 interface Props {
   skillId: string;
@@ -70,6 +71,8 @@ export default function SessionForm({
   const minutes = Math.floor(secondsLeft / 60);
   const seconds = secondsLeft % 60;
   const elapsed = Math.round(elapsedSeconds / 60);
+  const totalSeconds = defaultMinutes * 60;
+  const progress = totalSeconds > 0 ? elapsedSeconds / totalSeconds : 0;
 
   function handleFinishPractice() {
     setIsRunning(false);
@@ -170,18 +173,19 @@ export default function SessionForm({
               {skillName}
             </h3>
 
-            {/* Timer display */}
-            <div className="text-center py-6">
+            {/* Timer display — a leaf grows as the session runs */}
+            <div className="text-center pt-2 pb-4">
+              <GrowingLeaf progress={progress} done={timerDone} />
               <div
-                className={`text-5xl font-mono tabular-nums ${
-                  timerDone ? "text-amber-600" : "text-gray-900"
+                className={`text-4xl font-mono tabular-nums -mt-2 ${
+                  timerDone ? "text-green-700" : "text-gray-900"
                 }`}
               >
                 {minutes}:{seconds.toString().padStart(2, "0")}
               </div>
               {timerDone && (
-                <p className="text-sm text-amber-600 mt-2 font-medium">
-                  Time&apos;s up!
+                <p className="text-sm text-green-700 mt-2 font-medium">
+                  Fully grown — nice work.
                 </p>
               )}
             </div>
