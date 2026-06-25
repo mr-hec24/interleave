@@ -174,6 +174,36 @@ exact theoretical question the project is built around — without requiring a
 separate study apparatus. The `topic_id` on each skill is already the data this
 would need; only the scheduler's selection rule would change (see §6).
 
+### 4.2 The practice timer as a switching enforcer
+
+Recommending the right switch is necessary but not sufficient. The failure mode
+this project most needs to defend against is **self-regulation override**: a
+learner deep in passé composé *feels* they need more time and keeps going, even
+though switching would serve retention better. This is the fluency illusion
+(Bjork, Dunlosky & Kornell, 2013) acting in real time — the moment the app's
+recommendation is most valuable is exactly the moment the learner is most
+inclined to ignore it.
+
+Each practice session therefore runs a **countdown timer** from the skill's
+configured session length. When it elapses, the app surfaces the next
+recommended skill as an explicit switch prompt. The timer converts an abstract
+recommendation ("interleave your practice") into a concrete, physical signal
+("time to switch — X is up next"). It is the behavioral counterpart to the
+scheduler: the scheduler decides *what* is next; the timer marks *when* to move.
+
+Two design constraints keep this honest:
+
+- **Nudge, not wall.** The timer never forces a switch. A learner may dismiss it
+  and continue. This preserves autonomy *and* yields data: staying past the
+  timer is an implicit rejection of the recommendation, feeding the
+  recommendation-acceptance-rate metric (§6) — a behavioral measure of whether
+  the design earns trust.
+- **The rating step is never timed.** The countdown governs only the practice
+  phase. The self-assessed 0–5 recall rating — the core measurement signal (§3)
+  — is collected afterward with no clock, so time pressure cannot degrade it.
+  Session duration is captured from actual elapsed time rather than self-report,
+  improving data quality as a side effect.
+
 ## 5. Design for Trust
 
 **Visible reasoning.** The dashboard shows the actual numbers behind every
