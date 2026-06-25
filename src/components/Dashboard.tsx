@@ -388,23 +388,40 @@ export default function Dashboard({
         </section>
 
         {/* Session logging modal */}
-        {loggingSkillId && (
-          <SessionForm
-            skillId={loggingSkillId}
-            skillName={
-              skills.find((s) => s.id === loggingSkillId)?.name ?? ""
-            }
-            defaultMinutes={
-              skills.find((s) => s.id === loggingSkillId)
-                ?.default_session_minutes ?? 25
-            }
-            onLogged={() => {
-              setLoggingSkillId(null);
-              refreshData();
-            }}
-            onCancel={() => setLoggingSkillId(null)}
-          />
-        )}
+        {loggingSkillId && (() => {
+          const currentIndex = recommendations.findIndex(
+            (r) => r.skillId === loggingSkillId
+          );
+          const nextRec = recommendations.find(
+            (r, i) => i !== currentIndex && r.skillId !== loggingSkillId
+          );
+          return (
+            <SessionForm
+              skillId={loggingSkillId}
+              skillName={
+                skills.find((s) => s.id === loggingSkillId)?.name ?? ""
+              }
+              defaultMinutes={
+                skills.find((s) => s.id === loggingSkillId)
+                  ?.default_session_minutes ?? 25
+              }
+              nextSkillName={nextRec?.skillName ?? null}
+              onSwitchToNext={
+                nextRec
+                  ? () => {
+                      refreshData();
+                      setLoggingSkillId(nextRec.skillId);
+                    }
+                  : undefined
+              }
+              onLogged={() => {
+                setLoggingSkillId(null);
+                refreshData();
+              }}
+              onCancel={() => setLoggingSkillId(null)}
+            />
+          );
+        })()}
 
         {/* Recent sessions */}
         {sessions.length > 0 && (
