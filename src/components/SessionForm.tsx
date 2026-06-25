@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { applySm2 } from "@/lib/sm2";
+import ScopeGuidance from "./ScopeGuidance";
 
 interface Props {
   skillId: string;
@@ -126,6 +127,8 @@ export default function SessionForm({
         <h3 className="text-lg font-semibold text-gray-900">
           Log session: {skillName}
         </h3>
+
+        <ScopeGuidance variant="session" />
 
         <div>
           <label className="text-sm text-gray-600 block mb-1">

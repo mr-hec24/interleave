@@ -46,6 +46,7 @@ export default function Dashboard({
   const [skills, setSkills] = useState(initialSkills);
   const [sessions, setSessions] = useState(initialSessions);
   const [showSkillForm, setShowSkillForm] = useState(false);
+  const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
   const [loggingSkillId, setLoggingSkillId] = useState<string | null>(null);
   const supabase = createClient();
 
@@ -80,6 +81,23 @@ export default function Dashboard({
     if (newSkills) setSkills(newSkills);
     if (newSessions) setSessions(newSessions);
   }, [supabase]);
+
+  const handleRemoveSkill = useCallback(
+    async (skill: Skill) => {
+      const confirmed = window.confirm(
+        `Remove "${skill.name}"? It will be archived and stop appearing in ` +
+          `recommendations. Your logged sessions are kept.`
+      );
+      if (!confirmed) return;
+
+      await supabase
+        .from("skills")
+        .update({ archived_at: new Date().toISOString() })
+        .eq("id", skill.id);
+      refreshData();
+    },
+    [supabase, refreshData]
+  );
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -140,7 +158,23 @@ export default function Dashboard({
             </p>
           ) : (
             <div className="space-y-2">
-              {skills.map((skill) => (
+              {skills.map((skill) =>
+                editingSkillId === skill.id ? (
+                  <SkillForm
+                    key={skill.id}
+                    skill={{
+                      id: skill.id,
+                      name: skill.name,
+                      description: skill.description,
+                      default_session_minutes: skill.default_session_minutes,
+                    }}
+                    onCreated={() => {
+                      setEditingSkillId(null);
+                      refreshData();
+                    }}
+                    onCancel={() => setEditingSkillId(null)}
+                  />
+                ) : (
                 <div
                   key={skill.id}
                   className="bg-white rounded-lg border border-gray-200 p-4 flex items-center justify-between"
@@ -172,14 +206,29 @@ export default function Dashboard({
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => setLoggingSkillId(skill.id)}
-                    className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-3 py-1.5"
-                  >
-                    Log session
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setEditingSkillId(skill.id)}
+                      className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-3 py-1.5"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleRemoveSkill(skill)}
+                      className="text-xs text-gray-400 hover:text-red-600 border border-gray-200 rounded px-3 py-1.5"
+                    >
+                      Remove
+                    </button>
+                    <button
+                      onClick={() => setLoggingSkillId(skill.id)}
+                      className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded px-3 py-1.5"
+                    >
+                      Log session
+                    </button>
+                  </div>
                 </div>
-              ))}
+                )
+              )}
             </div>
           )}
         </section>

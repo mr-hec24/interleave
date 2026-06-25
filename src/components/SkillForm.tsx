@@ -2,16 +2,27 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import ScopeGuidance from "./ScopeGuidance";
+
+interface ExistingSkill {
+  id: string;
+  name: string;
+  description: string | null;
+  default_session_minutes: number;
+}
 
 interface Props {
   onCreated: () => void;
   onCancel: () => void;
+  /** When provided, the form edits this skill instead of creating a new one. */
+  skill?: ExistingSkill;
 }
 
-export default function SkillForm({ onCreated, onCancel }: Props) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [minutes, setMinutes] = useState(25);
+export default function SkillForm({ onCreated, onCancel, skill }: Props) {
+  const isEditing = !!skill;
+  const [name, setName] = useState(skill?.name ?? "");
+  const [description, setDescription] = useState(skill?.description ?? "");
+  const [minutes, setMinutes] = useState(skill?.default_session_minutes ?? 25);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const supabase = createClient();
@@ -31,15 +42,18 @@ export default function SkillForm({ onCreated, onCancel }: Props) {
       return;
     }
 
-    const { error: insertError } = await supabase.from("skills").insert({
-      user_id: user.id,
+    const fields = {
       name: name.trim(),
       description: description.trim() || null,
       default_session_minutes: minutes,
-    });
+    };
 
-    if (insertError) {
-      setError(insertError.message);
+    const { error: writeError } = isEditing
+      ? await supabase.from("skills").update(fields).eq("id", skill!.id)
+      : await supabase.from("skills").insert({ user_id: user.id, ...fields });
+
+    if (writeError) {
+      setError(writeError.message);
       setLoading(false);
     } else {
       onCreated();
@@ -51,6 +65,7 @@ export default function SkillForm({ onCreated, onCancel }: Props) {
       onSubmit={handleSubmit}
       className="bg-white rounded-lg border border-gray-200 p-4 mb-4 space-y-3"
     >
+      <ScopeGuidance variant="skill" />
       <input
         type="text"
         placeholder="Skill name (e.g. Guitar fingerpicking)"
@@ -85,7 +100,11 @@ export default function SkillForm({ onCreated, onCancel }: Props) {
           disabled={loading}
           className="px-4 py-2 bg-gray-900 text-white text-sm rounded-md hover:bg-gray-800 disabled:opacity-50"
         >
-          {loading ? "Adding…" : "Add skill"}
+          {loading
+            ? "Saving…"
+            : isEditing
+              ? "Save changes"
+              : "Add skill"}
         </button>
         <button
           type="button"
