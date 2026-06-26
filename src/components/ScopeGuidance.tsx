@@ -11,10 +11,10 @@ interface Props {
  */
 export default function ScopeGuidance({ variant }: Props) {
   return (
-    <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-900 space-y-1.5">
+    <div className="rounded-xl bg-tint border border-tint-border px-3.5 py-3 text-xs text-ink-soft space-y-1.5">
       {variant === "skill" ? (
         <>
-          <p className="font-medium">
+          <p className="font-medium text-ink">
             Keep skills narrow and concrete.
           </p>
           <p>
@@ -39,7 +39,7 @@ export default function ScopeGuidance({ variant }: Props) {
               <span className="text-green-700">✓ Bias–variance tradeoff</span>
             </li>
           </ul>
-          <p className="text-amber-700">
+          <p className="text-ink-mute">
             Broad goals like &quot;learn guitar&quot; aren&apos;t skills — they&apos;re
             collections of them. The scheduler needs a single forgetting curve
             per skill to know when to bring it back.
@@ -47,7 +47,7 @@ export default function ScopeGuidance({ variant }: Props) {
         </>
       ) : (
         <>
-          <p className="font-medium">What counts as a session?</p>
+          <p className="font-medium text-ink">What counts as a session?</p>
           <p>
             A session is one focused retrieval attempt at this specific skill —
             you tried to recall or perform it, then rate how it went. The rating

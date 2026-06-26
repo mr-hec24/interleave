@@ -80,76 +80,122 @@ export default function SkillForm({
     }
   }
 
+  const labelCls =
+    "block text-[10px] font-bold tracking-[0.08em] uppercase text-ink-mute mb-1.5";
+  const inputCls =
+    "w-full box-border text-[15px] font-medium text-ink bg-surface border border-edge rounded-xl px-3.5 py-3 placeholder-ink-mute";
+
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-white rounded-lg border border-gray-200 p-4 mb-4 space-y-3"
+      className="bg-surface-2 rounded-2xl border border-edge shadow-[var(--shadow)] overflow-hidden mb-4"
     >
-      <ScopeGuidance variant="skill" />
-      <input
-        type="text"
-        placeholder="Skill name (e.g. Guitar fingerpicking)"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        required
-        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 placeholder-gray-400"
-      />
-      <input
-        type="text"
-        placeholder="Description (optional)"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 placeholder-gray-400"
-      />
-      {topics.length > 0 && (
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Topic:</label>
-          <select
-            value={topicId ?? ""}
-            onChange={(e) => setTopicId(e.target.value || null)}
-            className="px-2 py-1 border border-gray-300 rounded-md text-sm text-gray-900"
-          >
-            <option value="">No topic</option>
-            {topics.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-      <div className="flex items-center gap-2">
-        <label className="text-sm text-gray-600">Default session:</label>
-        <input
-          type="number"
-          min={5}
-          max={120}
-          value={minutes}
-          onChange={(e) => setMinutes(Number(e.target.value))}
-          className="w-20 px-2 py-1 border border-gray-300 rounded-md text-sm text-gray-900"
-        />
-        <span className="text-sm text-gray-500">min</span>
-      </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-4 py-2 bg-gray-900 text-white text-sm rounded-md hover:bg-gray-800 disabled:opacity-50"
-        >
-          {loading
-            ? "Saving…"
-            : isEditing
-              ? "Save changes"
-              : "Add skill"}
-        </button>
+      <div className="flex items-center justify-between px-5 py-3.5 border-b border-edge">
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700"
+          className="text-sm font-medium text-ink-soft hover:text-ink"
         >
           Cancel
         </button>
+        <span className="font-display font-semibold text-lg text-ink">
+          {isEditing ? "Edit skill" : "New skill"}
+        </span>
+        <button
+          type="submit"
+          disabled={loading}
+          className="text-sm font-semibold text-green-deep disabled:opacity-50"
+        >
+          {loading ? "Saving…" : "Save"}
+        </button>
+      </div>
+
+      <div className="p-5 flex flex-col gap-4">
+        <ScopeGuidance variant="skill" />
+
+        <div>
+          <label className={labelCls} htmlFor="sk-name">
+            Skill name
+          </label>
+          <input
+            id="sk-name"
+            type="text"
+            placeholder="e.g. Blues scale in A"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            className={inputCls}
+          />
+        </div>
+
+        {topics.length > 0 && (
+          <div>
+            <label className={labelCls} htmlFor="sk-topic">
+              Topic (planter)
+            </label>
+            <select
+              id="sk-topic"
+              value={topicId ?? ""}
+              onChange={(e) => setTopicId(e.target.value || null)}
+              className={inputCls}
+            >
+              <option value="">No topic</option>
+              {topics.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div>
+          <label className={labelCls} htmlFor="sk-notes">
+            Notes{" "}
+            <span className="normal-case tracking-normal font-normal text-ink-mute">
+              (optional)
+            </span>
+          </label>
+          <textarea
+            id="sk-notes"
+            rows={2}
+            placeholder="What to focus on; what trips you up."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className={`${inputCls} resize-none`}
+          />
+        </div>
+
+        <div>
+          <label className={labelCls} htmlFor="sk-minutes">
+            Default session length
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              id="sk-minutes"
+              type="number"
+              min={5}
+              max={120}
+              value={minutes}
+              onChange={(e) => setMinutes(Number(e.target.value))}
+              className="w-24 box-border text-[15px] font-medium text-ink bg-surface border border-edge rounded-xl px-3.5 py-2.5"
+            />
+            <span className="text-sm text-ink-mute">min</span>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-2.5 bg-tint border border-tint-border rounded-xl px-3.5 py-3">
+          <svg width="16" height="16" viewBox="0 0 100 100" aria-hidden="true" className="flex-shrink-0 mt-0.5">
+            <path d="M50,92 L50,52" stroke="var(--green)" strokeWidth="8" strokeLinecap="round" />
+            <ellipse cx="50" cy="40" rx="11" ry="18" fill="var(--green)" />
+          </svg>
+          <span className="text-xs leading-relaxed text-ink-soft">
+            Interleaf chooses when you&apos;ll practise this — no reminders to set.
+            You just tend the garden when it asks.
+          </span>
+        </div>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
     </form>
   );

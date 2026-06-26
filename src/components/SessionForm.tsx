@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { applySm2 } from "@/lib/sm2";
 import Plant from "./Plant";
+import GrowingTimerLeaf from "./GrowingTimerLeaf";
 
 interface Props {
   skillId: string;
@@ -220,15 +221,7 @@ export default function SessionForm({
                   style={{ transition: "stroke-dashoffset 1s linear" }}
                 />
               </svg>
-              <div style={{ transform: `scaleY(${0.25 + progress * 0.75})`, transformOrigin: "bottom center", transition: "transform 1s ease-out" }}>
-                <Plant
-                  health={timerDone ? "flowering" : "strong"}
-                  label={skillName}
-                  size={120}
-                  showText={false}
-                  decorative
-                />
-              </div>
+              <GrowingTimerLeaf progress={progress} done={timerDone} size={120} />
             </div>
 
             <div className="font-display text-3xl text-ink mt-4 tabular-nums">
