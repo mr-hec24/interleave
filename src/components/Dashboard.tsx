@@ -68,6 +68,7 @@ export default function Dashboard({
   const [showTopicForm, setShowTopicForm] = useState(false);
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [loggingSkillId, setLoggingSkillId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const supabase = createClient();
 
   const topicOptions = topics.map((t) => ({ id: t.id, name: t.name }));
@@ -186,8 +187,8 @@ export default function Dashboard({
   return (
     <div className="min-h-screen bg-paper">
       {/* Header */}
-      <header className="h-16 bg-surface border-b border-edge">
-        <div className="max-w-5xl mx-auto h-full px-6 flex items-center justify-between">
+      <header className="bg-surface border-b border-edge">
+        <div className="max-w-5xl mx-auto h-16 px-6 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <svg width="26" height="26" viewBox="0 0 120 120" aria-hidden="true">
               <path
@@ -206,7 +207,9 @@ export default function Dashboard({
               interleaf
             </span>
           </div>
-          <div className="flex items-center gap-4">
+
+          {/* Desktop controls */}
+          <div className="hidden md:flex items-center gap-4">
             <div
               role="tablist"
               aria-label="Dashboard view"
@@ -238,7 +241,58 @@ export default function Dashboard({
               {(user.email ?? "?")[0].toUpperCase()}
             </button>
           </div>
+
+          {/* Mobile hamburger */}
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="md:hidden w-9 h-9 flex items-center justify-center rounded-lg text-ink-soft hover:text-ink hover:bg-surface-2 transition-colors"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              {menuOpen ? (
+                <path d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" />
+              ) : (
+                <path fillRule="evenodd" clipRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
+              )}
+            </svg>
+          </button>
         </div>
+
+        {/* Mobile dropdown */}
+        {menuOpen && (
+          <div className="md:hidden border-t border-edge px-6 py-4 flex flex-col gap-4">
+            <div
+              role="tablist"
+              aria-label="Dashboard view"
+              className="flex bg-surface-2 border border-edge rounded-full p-1 self-start"
+            >
+              {(["garden", "data"] as const).map((v) => (
+                <button
+                  key={v}
+                  role="tab"
+                  aria-selected={view === v}
+                  onClick={() => { setView(v); setMenuOpen(false); }}
+                  className={`text-sm font-semibold px-4 py-1.5 rounded-full capitalize transition-colors ${
+                    view === v
+                      ? "bg-green text-on-green"
+                      : "text-ink-soft hover:text-ink"
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <ThemeToggle />
+              <button
+                onClick={handleSignOut}
+                className="text-sm font-medium text-ink-soft hover:text-ink"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-7 grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-7">
@@ -603,6 +657,7 @@ export default function Dashboard({
           const skill = skills.find((s) => s.id === loggingSkillId);
           return (
             <SessionForm
+              key={loggingSkillId}
               skillId={loggingSkillId}
               skillName={skill?.name ?? ""}
               defaultMinutes={skill?.default_session_minutes ?? 25}
