@@ -11,6 +11,9 @@ interface Props {
   skillName: string;
   defaultMinutes: number;
   nextSkillName?: string | null;
+  gardenComplete?: boolean;
+  comebackLabel?: string | null;
+  nextDueSkillName?: string | null;
   onLogged: () => void;
   onSwitchToNext?: () => void;
   onCancel: () => void;
@@ -25,7 +28,7 @@ const QUALITY = [
   { q: 5, label: "Effortless" },
 ];
 
-type Phase = "practice" | "recall" | "switch";
+type Phase = "practice" | "recall" | "switch" | "done";
 
 const RING = 2 * Math.PI * 86; // circumference for r=86
 
@@ -34,6 +37,9 @@ export default function SessionForm({
   skillName,
   defaultMinutes,
   nextSkillName,
+  gardenComplete,
+  comebackLabel,
+  nextDueSkillName,
   onLogged,
   onSwitchToNext,
   onCancel,
@@ -234,7 +240,9 @@ export default function SessionForm({
 
     setNextInterval(after.intervalDays);
     setLoading(false);
-    if (nextSkillName && onSwitchToNext) {
+    if (gardenComplete) {
+      setPhase("done");
+    } else if (nextSkillName && onSwitchToNext) {
       setPhase("switch");
     } else {
       onLogged();
@@ -255,7 +263,9 @@ export default function SessionForm({
                 ? "Practice mode"
                 : phase === "recall"
                   ? "Session complete"
-                  : "Keep the momentum"}
+                  : phase === "done"
+                    ? "Garden tended ✿"
+                    : "Keep the momentum"}
             </span>
             <button
               onClick={onCancel}
@@ -401,6 +411,41 @@ export default function SessionForm({
                 {loading ? "Saving…" : "Continue →"}
               </button>
             </div>
+          </div>
+        )}
+
+        {phase === "done" && (
+          <div className="px-10 sm:px-14 pt-11 pb-12 flex flex-col items-center text-center">
+            <Plant health="flowering" label={skillName} size={110} showText={false} decorative />
+            <div className="text-[11px] font-bold tracking-widest uppercase text-green-deep mt-4">
+              Whole garden tended
+            </div>
+            <div className="font-display font-semibold text-3xl text-ink mt-2">
+              You&apos;re done for today
+            </div>
+            <p className="text-[15px] text-ink-soft mt-3 max-w-md leading-relaxed">
+              Every skill is above the 85% recall threshold. Studying more right now would
+              actually work against you — memory consolidates between sessions, not during
+              them. The forgetting that happens overnight is what makes tomorrow&apos;s
+              review stick.
+            </p>
+            {comebackLabel && (
+              <div className="mt-5 bg-tint border border-tint-border rounded-xl px-5 py-3 text-sm font-medium text-tint-ink">
+                Come back{" "}
+                <span className="font-semibold">{comebackLabel}</span>
+                {nextDueSkillName && (
+                  <>
+                    {" "}— <span className="font-semibold">{nextDueSkillName}</span> will need watering first
+                  </>
+                )}
+              </div>
+            )}
+            <button
+              onClick={onLogged}
+              className="font-semibold text-on-green bg-green-btn rounded-xl py-3.5 px-8 mt-7"
+            >
+              Done for today
+            </button>
           </div>
         )}
 

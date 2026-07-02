@@ -776,9 +776,47 @@ export default function Dashboard({
       {/* Session modal */}
       {loggingSkillId &&
         (() => {
+          // Only offer "switch to next" for skills that are actually due or new
           const nextRec = recommendations.find(
-            (r) => r.skillId !== loggingSkillId
+            (r) => r.skillId !== loggingSkillId && (r.isNew || r.priorityScore > 0)
           );
+          const loggingRec = recommendations.find((r) => r.skillId === loggingSkillId);
+          const isLastDueSkill =
+            !nextRec && loggingRec != null && (loggingRec.isNew || loggingRec.priorityScore > 0);
+
+          // After the last session, find which resting skill will expire soonest
+          const restingOthers = recommendations.filter(
+            (r) => r.skillId !== loggingSkillId && !r.isNew && r.priorityScore === 0
+          );
+          const gardenNextDueRec =
+            isLastDueSkill && restingOthers.length > 0
+              ? restingOthers.reduce((soonest, rec) => {
+                  const dS =
+                    Math.max(soonest.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+                    (soonest.daysSinceReview ?? 0);
+                  const dR =
+                    Math.max(rec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+                    (rec.daysSinceReview ?? 0);
+                  return dR < dS ? rec : soonest;
+                })
+              : null;
+          const gardenComebackLabel = (() => {
+            if (!gardenNextDueRec) return null;
+            const daysUntil =
+              Math.max(gardenNextDueRec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+              (gardenNextDueRec.daysSinceReview ?? 0);
+            const date = new Date();
+            date.setDate(date.getDate() + Math.max(1, Math.ceil(daysUntil)));
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            if (date.toDateString() === tomorrow.toDateString()) return "tomorrow";
+            return date.toLocaleDateString("en-US", {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+            });
+          })();
+
           const skill = skills.find((s) => s.id === loggingSkillId);
           return (
             <SessionForm
@@ -795,6 +833,9 @@ export default function Dashboard({
                     }
                   : undefined
               }
+              gardenComplete={isLastDueSkill}
+              comebackLabel={gardenComebackLabel}
+              nextDueSkillName={gardenNextDueRec?.skillName ?? null}
               onLogged={() => {
                 setLoggingSkillId(null);
                 refreshData();
