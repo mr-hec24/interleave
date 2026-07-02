@@ -11,6 +11,7 @@ import SessionForm from "./SessionForm";
 import TopicForm from "./TopicForm";
 import Plant from "./Plant";
 import ThemeToggle from "./ThemeToggle";
+import OnboardingModal from "./OnboardingModal";
 
 interface Skill {
   id: string;
@@ -69,6 +70,9 @@ export default function Dashboard({
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [loggingSkillId, setLoggingSkillId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(
+    initialSkills.length === 0 && initialTopics.length === 0
+  );
   const supabase = createClient();
 
   const topicOptions = topics.map((t) => ({ id: t.id, name: t.name }));
@@ -100,6 +104,48 @@ export default function Dashboard({
   const floweringCount = recommendations.filter(
     (r) => healthFromRec(r) === "flowering"
   ).length;
+
+  const handleOnboardingComplete = useCallback(
+    async ({ topicName, skillName }: { topicName: string; skillName: string }) => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Create topic
+      const { data: newTopic } = await supabase
+        .from("topics")
+        .insert({ user_id: user.id, name: topicName })
+        .select()
+        .single();
+
+      // Create skill under that topic
+      if (newTopic) {
+        await supabase.from("skills").insert({
+          user_id: user.id,
+          name: skillName,
+          topic_id: newTopic.id,
+          default_session_minutes: 25,
+        });
+      }
+
+      setShowOnboarding(false);
+      // Reload fresh data so sr_state row (created by DB trigger) is present
+      const { data: newSkills } = await supabase
+        .from("skills")
+        .select("*, sr_state(*)")
+        .is("archived_at", null)
+        .order("created_at", { ascending: true });
+      const { data: newTopics } = await supabase
+        .from("topics")
+        .select("*")
+        .is("archived_at", null)
+        .order("created_at", { ascending: true });
+      if (newSkills) setSkills(newSkills);
+      if (newTopics) setTopics(newTopics);
+    },
+    [supabase]
+  );
 
   const refreshData = useCallback(async () => {
     const { data: newSkills } = await supabase
@@ -186,6 +232,9 @@ export default function Dashboard({
 
   return (
     <div className="min-h-screen bg-paper">
+      {showOnboarding && (
+        <OnboardingModal onComplete={handleOnboardingComplete} />
+      )}
       {/* Header */}
       <header className="bg-surface border-b border-edge">
         <div className="max-w-5xl mx-auto h-16 px-6 flex items-center justify-between">
