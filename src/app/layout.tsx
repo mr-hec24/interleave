@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Spectral, Hanken_Grotesk, Quicksand } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 const spectral = Spectral({
@@ -46,6 +47,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col bg-paper text-ink">
         {children}
+        <Analytics />
       </body>
     </html>
   );
