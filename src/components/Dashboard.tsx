@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import { rankSkills, formatReasonText } from "@/lib/scheduler";
+import { rankSkills, formatReasonText, R_THRESHOLD } from "@/lib/scheduler";
 import type { SchedulerRecommendation } from "@/lib/scheduler";
 import { healthFromRec, retrPct } from "@/lib/health";
 import SkillForm from "./SkillForm";
@@ -71,6 +71,22 @@ export default function Dashboard({
   const [menuOpen, setMenuOpen] = useState(false);
   const supabase = createClient();
 
+  useEffect(() => {
+    if (!editingSkillId) return;
+    const scrollY = window.scrollY;
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      document.body.style.overflow = "";
+      window.scrollTo(0, scrollY);
+    };
+  }, [editingSkillId]);
+
   const topicOptions = topics.map((t) => ({ id: t.id, name: t.name }));
 
   const recommendations: SchedulerRecommendation[] = rankSkills(
@@ -88,6 +104,40 @@ export default function Dashboard({
 
   const recById = new Map(recommendations.map((r) => [r.skillId, r]));
   const topRec = recommendations.length > 0 ? recommendations[0] : null;
+
+  const isDoneForToday =
+    skills.length > 0 &&
+    recommendations.length > 0 &&
+    recommendations.every((r) => !r.isNew && r.priorityScore === 0);
+
+  const nextDueRec = isDoneForToday
+    ? recommendations.reduce((soonest, rec) => {
+        const dSoonest =
+          Math.max(soonest.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+          (soonest.daysSinceReview ?? 0);
+        const dRec =
+          Math.max(rec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+          (rec.daysSinceReview ?? 0);
+        return dRec < dSoonest ? rec : soonest;
+      })
+    : null;
+
+  const comebackLabel = (() => {
+    if (!nextDueRec) return null;
+    const daysUntil =
+      Math.max(nextDueRec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+      (nextDueRec.daysSinceReview ?? 0);
+    const date = new Date();
+    date.setDate(date.getDate() + Math.max(1, Math.ceil(daysUntil)));
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    if (date.toDateString() === tomorrow.toDateString()) return "tomorrow";
+    return date.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+  })();
 
   // Garden-health stats
   const reviewed = recommendations.filter((r) => !r.isNew);
@@ -298,8 +348,30 @@ export default function Dashboard({
       <main className="max-w-5xl mx-auto px-6 py-7 grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-7">
         {/* Left column */}
         <div className="space-y-7">
-          {/* Water this next */}
-          {topRec && (
+          {/* Water this next / Done for today */}
+          {isDoneForToday ? (
+            <div className="bg-tint border border-tint-border rounded-2xl p-6 sm:p-7">
+              <div className="inline-flex items-center gap-2 bg-surface/60 rounded-full px-3 py-1 mb-3">
+                <span className="text-sm" aria-hidden="true">✿</span>
+                <span className="text-[11px] font-bold tracking-wide uppercase text-tint-ink">
+                  Garden tended
+                </span>
+              </div>
+              <div className="font-display font-semibold text-2xl sm:text-3xl text-ink leading-tight">
+                You&apos;re done for today
+              </div>
+              <p className="text-[15px] text-ink-soft mt-2 leading-relaxed">
+                Every skill is above the 85% recall threshold. Rest now — consolidation happens between sessions, not during them.
+              </p>
+              {nextDueRec && comebackLabel && (
+                <p className="text-sm font-medium text-tint-ink mt-4 bg-surface/60 rounded-xl px-4 py-3 inline-block">
+                  Come back {comebackLabel} —{" "}
+                  <span className="font-semibold">{nextDueRec.skillName}</span>{" "}
+                  will need watering first.
+                </p>
+              )}
+            </div>
+          ) : topRec ? (
             <div className="bg-tint border border-tint-border rounded-2xl p-6 sm:p-7 flex flex-col sm:flex-row gap-6 items-center">
               <div className="flex-shrink-0">{plantFor(skills.find((s) => s.id === topRec.skillId)!, 86)}</div>
               <div className="flex-1 min-w-0">
@@ -328,7 +400,7 @@ export default function Dashboard({
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
 
           {/* GARDEN VIEW */}
           {view === "garden" && (
@@ -524,10 +596,12 @@ export default function Dashboard({
           {/* Today's schedule */}
           <div className="bg-surface border border-edge rounded-2xl p-5">
             <div className="font-display font-semibold text-[17px] text-ink">
-              Today&apos;s schedule
+              {isDoneForToday ? "All rested ✿" : "Today’s schedule"}
             </div>
             <p className="text-xs text-ink-mute mt-0.5 mb-3.5">
-              Chosen by the scheduler — the reasoning is always visible.
+              {isDoneForToday
+                ? "Nothing is due — every skill is above the recall threshold."
+                : "Chosen by the scheduler — the reasoning is always visible."}
             </p>
             {recommendations.length === 0 ? (
               <p className="text-xs text-ink-mute">Nothing scheduled yet.</p>
