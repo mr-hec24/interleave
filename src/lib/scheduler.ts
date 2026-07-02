@@ -17,7 +17,7 @@ export interface SchedulerRecommendation {
   isNew: boolean;
 }
 
-const R_THRESHOLD = 0.85;
+export const R_THRESHOLD = 0.85;
 
 export function computeRetrievability(
   daysSinceReview: number,

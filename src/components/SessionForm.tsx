@@ -11,6 +11,9 @@ interface Props {
   skillName: string;
   defaultMinutes: number;
   nextSkillName?: string | null;
+  gardenComplete?: boolean;
+  comebackLabel?: string | null;
+  nextDueSkillName?: string | null;
   onLogged: () => void;
   onSwitchToNext?: () => void;
   onCancel: () => void;
@@ -25,7 +28,7 @@ const QUALITY = [
   { q: 5, label: "Effortless" },
 ];
 
-type Phase = "practice" | "recall" | "switch";
+type Phase = "practice" | "recall" | "switch" | "done";
 
 const RING = 2 * Math.PI * 86; // circumference for r=86
 
@@ -34,6 +37,9 @@ export default function SessionForm({
   skillName,
   defaultMinutes,
   nextSkillName,
+  gardenComplete,
+  comebackLabel,
+  nextDueSkillName,
   onLogged,
   onSwitchToNext,
   onCancel,
@@ -43,7 +49,11 @@ export default function SessionForm({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isRunning, setIsRunning] = useState(true);
   const [timerDone, setTimerDone] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endTimeRef = useRef(Date.now() + defaultMinutes * 60 * 1000);
+  const pausedRemainingRef = useRef<number | null>(null);
+  const completionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notifiedRef = useRef(false);
+  const skipTransitionRef = useRef(false);
 
   const [quality, setQuality] = useState<number | null>(null);
   const [note, setNote] = useState("");
@@ -53,22 +63,85 @@ export default function SessionForm({
   const supabase = createClient();
 
   useEffect(() => {
-    if (!isRunning || phase !== "practice") return;
-    intervalRef.current = setInterval(() => {
-      setElapsedSeconds((p) => p + 1);
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          setTimerDone(true);
-          setIsRunning(false);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+    document.body.style.overflow = "hidden";
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      document.body.style.overflow = "";
+      window.scrollTo(0, scrollY);
     };
-  }, [isRunning, phase]);
+  }, []);
+
+  useEffect(() => {
+    if (!isRunning || phase !== "practice") return;
+
+    const totalSec = defaultMinutes * 60;
+
+    const tick = () => {
+      const remainingMs = Math.max(0, endTimeRef.current - Date.now());
+      const remainingSec = Math.ceil(remainingMs / 1000);
+      setSecondsLeft(remainingSec);
+      setElapsedSeconds(totalSec - remainingSec);
+
+      if (remainingMs <= 0) {
+        setTimerDone(true);
+        setIsRunning(false);
+        if (!notifiedRef.current && "Notification" in window && Notification.permission === "granted") {
+          notifiedRef.current = true;
+          new Notification("interleaf", {
+            body: `Your ${skillName} session is complete!`,
+          });
+        }
+      }
+    };
+
+    tick();
+    const intervalId = setInterval(tick, 1000);
+
+    const remainingMs = endTimeRef.current - Date.now();
+    if (remainingMs > 0) {
+      completionTimeoutRef.current = setTimeout(tick, remainingMs);
+    }
+
+    return () => {
+      clearInterval(intervalId);
+      if (completionTimeoutRef.current) clearTimeout(completionTimeoutRef.current);
+    };
+  }, [isRunning, phase, defaultMinutes, skillName]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible" || phase !== "practice" || !isRunning) return;
+      skipTransitionRef.current = true;
+      const remainingMs = Math.max(0, endTimeRef.current - Date.now());
+      const remainingSec = Math.ceil(remainingMs / 1000);
+      const totalSec = defaultMinutes * 60;
+      setSecondsLeft(remainingSec);
+      setElapsedSeconds(totalSec - remainingSec);
+      if (remainingMs <= 0) {
+        setTimerDone(true);
+        setIsRunning(false);
+      }
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          skipTransitionRef.current = false;
+        });
+      });
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [isRunning, phase, defaultMinutes]);
 
   const minutes = Math.floor(secondsLeft / 60);
   const seconds = secondsLeft % 60;
@@ -77,8 +150,19 @@ export default function SessionForm({
 
   function endPractice() {
     setIsRunning(false);
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (completionTimeoutRef.current) clearTimeout(completionTimeoutRef.current);
     setPhase("recall");
+  }
+
+  function togglePause() {
+    if (isRunning) {
+      pausedRemainingRef.current = Math.max(0, endTimeRef.current - Date.now());
+      setIsRunning(false);
+    } else {
+      endTimeRef.current = Date.now() + (pausedRemainingRef.current ?? 0);
+      pausedRemainingRef.current = null;
+      setIsRunning(true);
+    }
   }
 
   async function handleLog() {
@@ -156,7 +240,9 @@ export default function SessionForm({
 
     setNextInterval(after.intervalDays);
     setLoading(false);
-    if (nextSkillName && onSwitchToNext) {
+    if (gardenComplete) {
+      setPhase("done");
+    } else if (nextSkillName && onSwitchToNext) {
       setPhase("switch");
     } else {
       onLogged();
@@ -164,8 +250,8 @@ export default function SessionForm({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-surface rounded-2xl w-full max-w-3xl overflow-hidden shadow-xl border border-edge max-h-[92vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-hidden">
+      <div className="bg-surface rounded-2xl w-full max-w-3xl overflow-hidden shadow-xl border border-edge max-h-[92vh] overflow-y-auto overscroll-contain">
         {/* Header */}
         <div className="h-[62px] bg-surface-2 border-b border-edge flex items-center justify-between px-6">
           <span className="font-round font-semibold text-xl text-ink">
@@ -177,7 +263,9 @@ export default function SessionForm({
                 ? "Practice mode"
                 : phase === "recall"
                   ? "Session complete"
-                  : "Keep the momentum"}
+                  : phase === "done"
+                    ? "Garden tended ✿"
+                    : "Keep the momentum"}
             </span>
             <button
               onClick={onCancel}
@@ -218,7 +306,7 @@ export default function SessionForm({
                   strokeLinecap="round"
                   strokeDasharray={RING}
                   strokeDashoffset={RING * (1 - progress)}
-                  style={{ transition: "stroke-dashoffset 1s linear" }}
+                  style={{ transition: skipTransitionRef.current ? "none" : "stroke-dashoffset 1s linear" }}
                 />
               </svg>
               <GrowingTimerLeaf progress={progress} done={timerDone} size={120} />
@@ -234,7 +322,7 @@ export default function SessionForm({
             <div className="flex gap-3 w-full max-w-sm">
               {!timerDone && (
                 <button
-                  onClick={() => setIsRunning((r) => !r)}
+                  onClick={togglePause}
                   className="flex-1 text-sm font-semibold text-ink-soft bg-surface border border-tint-border rounded-xl py-3"
                 >
                   {isRunning ? "Pause" : "Resume"}
@@ -323,6 +411,41 @@ export default function SessionForm({
                 {loading ? "Saving…" : "Continue →"}
               </button>
             </div>
+          </div>
+        )}
+
+        {phase === "done" && (
+          <div className="px-10 sm:px-14 pt-11 pb-12 flex flex-col items-center text-center">
+            <Plant health="flowering" label={skillName} size={110} showText={false} decorative />
+            <div className="text-[11px] font-bold tracking-widest uppercase text-green-deep mt-4">
+              Whole garden tended
+            </div>
+            <div className="font-display font-semibold text-3xl text-ink mt-2">
+              You&apos;re done for today
+            </div>
+            <p className="text-[15px] text-ink-soft mt-3 max-w-md leading-relaxed">
+              Every skill is above the 85% recall threshold. Studying more right now would
+              actually work against you — memory consolidates between sessions, not during
+              them. The forgetting that happens overnight is what makes tomorrow&apos;s
+              review stick.
+            </p>
+            {comebackLabel && (
+              <div className="mt-5 bg-tint border border-tint-border rounded-xl px-5 py-3 text-sm font-medium text-tint-ink">
+                Come back{" "}
+                <span className="font-semibold">{comebackLabel}</span>
+                {nextDueSkillName && (
+                  <>
+                    {" "}— <span className="font-semibold">{nextDueSkillName}</span> will need watering first
+                  </>
+                )}
+              </div>
+            )}
+            <button
+              onClick={onLogged}
+              className="font-semibold text-on-green bg-green-btn rounded-xl py-3.5 px-8 mt-7"
+            >
+              Done for today
+            </button>
           </div>
         )}
 
