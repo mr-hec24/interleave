@@ -569,27 +569,29 @@ export default function Dashboard({
 
       {/* Edit-skill modal-ish (inline form) */}
       {editingSkillId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-md">
-            <SkillForm
-              skill={{
-                id: editingSkillId,
-                name: skills.find((s) => s.id === editingSkillId)?.name ?? "",
-                description:
-                  skills.find((s) => s.id === editingSkillId)?.description ?? null,
-                default_session_minutes:
-                  skills.find((s) => s.id === editingSkillId)
-                    ?.default_session_minutes ?? 25,
-                topic_id:
-                  skills.find((s) => s.id === editingSkillId)?.topic_id ?? null,
-              }}
-              topics={topicOptions}
-              onCreated={() => {
-                setEditingSkillId(null);
-                refreshData();
-              }}
-              onCancel={() => setEditingSkillId(null)}
-            />
+        <div className="fixed inset-0 bg-black/50 overflow-y-auto z-50">
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div className="w-full max-w-md">
+              <SkillForm
+                skill={{
+                  id: editingSkillId,
+                  name: skills.find((s) => s.id === editingSkillId)?.name ?? "",
+                  description:
+                    skills.find((s) => s.id === editingSkillId)?.description ?? null,
+                  default_session_minutes:
+                    skills.find((s) => s.id === editingSkillId)
+                      ?.default_session_minutes ?? 25,
+                  topic_id:
+                    skills.find((s) => s.id === editingSkillId)?.topic_id ?? null,
+                }}
+                topics={topicOptions}
+                onCreated={() => {
+                  setEditingSkillId(null);
+                  refreshData();
+                }}
+                onCancel={() => setEditingSkillId(null)}
+              />
+            </div>
           </div>
         </div>
       )}
