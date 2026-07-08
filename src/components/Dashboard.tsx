@@ -73,7 +73,37 @@ export default function Dashboard({
   const [showOnboarding, setShowOnboarding] = useState(
     initialSkills.length === 0 && initialTopics.length === 0
   );
+  const [notifEnabled, setNotifEnabled] = useState(true);
+  const [notifHour, setNotifHour] = useState(8);
+  const [notifTimezone, setNotifTimezone] = useState("UTC");
+  const [notifSaving, setNotifSaving] = useState(false);
   const supabase = createClient();
+
+  useEffect(() => {
+    const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    supabase
+      .from("profiles")
+      .select("notifications_enabled, notification_hour, notification_timezone")
+      .eq("id", user.id)
+      .single()
+      .then(({ data }) => {
+        if (!data) return;
+        setNotifEnabled(data.notifications_enabled ?? true);
+        setNotifHour(data.notification_hour ?? 8);
+        setNotifTimezone(data.notification_timezone ?? detectedTz ?? "UTC");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  async function saveNotifPrefs(updates: {
+    notifications_enabled?: boolean;
+    notification_hour?: number;
+    notification_timezone?: string;
+  }) {
+    setNotifSaving(true);
+    await supabase.from("profiles").update(updates).eq("id", user.id);
+    setNotifSaving(false);
+  }
 
   useEffect(() => {
     if (!editingSkillId) return;
@@ -716,6 +746,79 @@ export default function Dashboard({
               <b className="text-tint-ink">durable memory</b> — never streaks,
               logins, or session counts.
             </p>
+          </div>
+
+          {/* Notification preferences */}
+          <div className="bg-surface border border-edge rounded-2xl p-5">
+            <div className="font-display font-semibold text-[17px] text-ink mb-1">
+              Daily reminders
+            </div>
+            <p className="text-xs text-ink-mute mb-4">
+              Get an email when skills need practice.
+            </p>
+
+            {/* Toggle */}
+            <label className="flex items-center justify-between cursor-pointer mb-4">
+              <span className="text-sm font-medium text-ink">Email reminders</span>
+              <button
+                role="switch"
+                aria-checked={notifEnabled}
+                onClick={async () => {
+                  const next = !notifEnabled;
+                  setNotifEnabled(next);
+                  await saveNotifPrefs({ notifications_enabled: next });
+                }}
+                className={`relative w-10 h-6 rounded-full transition-colors ${notifEnabled ? "bg-green" : "bg-edge"}`}
+              >
+                <span
+                  className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${notifEnabled ? "translate-x-5" : "translate-x-1"}`}
+                />
+              </button>
+            </label>
+
+            {notifEnabled && (
+              <div className="space-y-3">
+                {/* Hour picker */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-ink-soft">Send at</span>
+                  <select
+                    value={notifHour}
+                    onChange={async (e) => {
+                      const h = parseInt(e.target.value, 10);
+                      setNotifHour(h);
+                      await saveNotifPrefs({ notification_hour: h });
+                    }}
+                    className="text-sm font-medium text-ink bg-surface-2 border border-edge rounded-lg px-2 py-1"
+                  >
+                    {Array.from({ length: 17 }, (_, i) => i + 6).map((h) => (
+                      <option key={h} value={h}>
+                        {h === 12 ? "12:00 PM" : h < 12 ? `${h}:00 AM` : `${h - 12}:00 PM`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Timezone display */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-ink-soft">Timezone</span>
+                  <button
+                    className="text-xs text-ink-mute hover:text-ink max-w-[140px] truncate text-right"
+                    onClick={async () => {
+                      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                      setNotifTimezone(detected);
+                      await saveNotifPrefs({ notification_timezone: detected });
+                    }}
+                    title="Click to auto-detect"
+                  >
+                    {notifTimezone}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {notifSaving && (
+              <p className="text-[11px] text-ink-mute mt-3">Saving…</p>
+            )}
           </div>
 
           {/* Recent sessions */}
