@@ -10,6 +10,23 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://interleaf.app";
 const FROM_ADDRESS = process.env.RESEND_FROM_ADDRESS ?? "Interleaf <noreply@resend.dev>";
 
 export async function POST() {
+  try {
+    return await handleSendTest();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[send-test] Uncaught error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+async function handleSendTest() {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return NextResponse.json(
+      { error: "SUPABASE_SERVICE_ROLE_KEY is not set — add it in Vercel → Settings → Environment Variables, then redeploy" },
+      { status: 500 }
+    );
+  }
+
   // Authenticate via session cookie — no CRON_SECRET needed
   const sessionClient = await createClient();
   const { data: { user } } = await sessionClient.auth.getUser();
