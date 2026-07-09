@@ -14,20 +14,6 @@ function isAuthorized(request: Request): boolean {
   return auth === `Bearer ${process.env.CRON_SECRET}`;
 }
 
-function localHourForTimezone(timezone: string): number {
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      hour12: false,
-      timeZone: timezone,
-    }).formatToParts(new Date());
-    const h = parts.find((p) => p.type === "hour");
-    return parseInt(h?.value ?? "0", 10);
-  } catch {
-    return new Date().getUTCHours();
-  }
-}
-
 function alreadySentToday(lastSentAt: string | null): boolean {
   if (!lastSentAt) return false;
   const diff = Date.now() - new Date(lastSentAt).getTime();
@@ -47,7 +33,7 @@ export async function GET(request: Request) {
   // Fetch all users with notifications enabled
   const { data: profiles, error: profilesError } = await db
     .from("profiles")
-    .select("id, email, display_name, notification_hour, notification_timezone, unsubscribe_token, last_notification_sent_at")
+    .select("id, email, display_name, unsubscribe_token, last_notification_sent_at")
     .eq("notifications_enabled", true)
     .not("email", "is", null);
 
@@ -59,10 +45,6 @@ export async function GET(request: Request) {
   const results: { userId: string; status: string }[] = [];
 
   for (const profile of profiles ?? []) {
-    const localHour = localHourForTimezone(profile.notification_timezone ?? "UTC");
-
-    // In dev, skip hour filter so the route always fires for easy testing
-    if (!isDev && localHour !== (profile.notification_hour ?? 8)) continue;
 
     // Skip if we already sent one in the past 20 hours
     if (alreadySentToday(profile.last_notification_sent_at)) {

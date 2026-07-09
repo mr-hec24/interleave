@@ -74,33 +74,23 @@ export default function Dashboard({
     initialSkills.length === 0 && initialTopics.length === 0
   );
   const [notifEnabled, setNotifEnabled] = useState(true);
-  const [notifHour, setNotifHour] = useState(8);
-  const [notifTimezone, setNotifTimezone] = useState("UTC");
   const [notifSaving, setNotifSaving] = useState(false);
   const [testEmailState, setTestEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const supabase = createClient();
 
   useEffect(() => {
-    const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     supabase
       .from("profiles")
-      .select("notifications_enabled, notification_hour, notification_timezone")
+      .select("notifications_enabled")
       .eq("id", user.id)
       .single()
       .then(({ data }) => {
-        if (!data) return;
-        setNotifEnabled(data.notifications_enabled ?? true);
-        setNotifHour(data.notification_hour ?? 8);
-        setNotifTimezone(data.notification_timezone ?? detectedTz ?? "UTC");
+        if (data) setNotifEnabled(data.notifications_enabled ?? true);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 
-  async function saveNotifPrefs(updates: {
-    notifications_enabled?: boolean;
-    notification_hour?: number;
-    notification_timezone?: string;
-  }) {
+  async function saveNotifPrefs(updates: { notifications_enabled?: boolean }) {
     setNotifSaving(true);
     await supabase.from("profiles").update(updates).eq("id", user.id);
     setNotifSaving(false);
@@ -778,43 +768,9 @@ export default function Dashboard({
             </label>
 
             {notifEnabled && (
-              <div className="space-y-3">
-                {/* Hour picker */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-ink-soft">Send at</span>
-                  <select
-                    value={notifHour}
-                    onChange={async (e) => {
-                      const h = parseInt(e.target.value, 10);
-                      setNotifHour(h);
-                      await saveNotifPrefs({ notification_hour: h });
-                    }}
-                    className="text-sm font-medium text-ink bg-surface-2 border border-edge rounded-lg px-2 py-1"
-                  >
-                    {Array.from({ length: 17 }, (_, i) => i + 6).map((h) => (
-                      <option key={h} value={h}>
-                        {h === 12 ? "12:00 PM" : h < 12 ? `${h}:00 AM` : `${h - 12}:00 PM`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Timezone display */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-ink-soft">Timezone</span>
-                  <button
-                    className="text-xs text-ink-mute hover:text-ink max-w-[140px] truncate text-right"
-                    onClick={async () => {
-                      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                      setNotifTimezone(detected);
-                      await saveNotifPrefs({ notification_timezone: detected });
-                    }}
-                    title="Click to auto-detect"
-                  >
-                    {notifTimezone}
-                  </button>
-                </div>
-              </div>
+              <p className="text-xs text-ink-mute">
+                Sends once daily at 8 AM ET when skills need practice.
+              </p>
             )}
 
             {notifEnabled && (
