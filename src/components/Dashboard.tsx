@@ -75,8 +75,6 @@ export default function Dashboard({
   );
   const [notifEnabled, setNotifEnabled] = useState(true);
   const [notifSaving, setNotifSaving] = useState(false);
-  const [testEmailState, setTestEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [testEmailError, setTestEmailError] = useState<string | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
@@ -750,66 +748,32 @@ export default function Dashboard({
             </p>
 
             {/* Toggle */}
-            <label className="flex items-center justify-between cursor-pointer mb-4">
+            <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-ink">Email reminders</span>
-              <button
-                role="switch"
-                aria-checked={notifEnabled}
-                onClick={async () => {
-                  const next = !notifEnabled;
-                  setNotifEnabled(next);
-                  await saveNotifPrefs({ notifications_enabled: next });
-                }}
-                className={`relative w-10 h-6 rounded-full transition-colors ${notifEnabled ? "bg-green" : "bg-edge"}`}
-              >
-                <span
-                  className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${notifEnabled ? "translate-x-5" : "translate-x-1"}`}
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={notifEnabled}
+                  onChange={async (e) => {
+                    const next = e.target.checked;
+                    setNotifEnabled(next);
+                    await saveNotifPrefs({ notifications_enabled: next });
+                  }}
                 />
-              </button>
-            </label>
+                <div className={`w-11 h-6 rounded-full transition-colors duration-200 ${notifEnabled ? "bg-green" : "bg-edge"}`} />
+                <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${notifEnabled ? "translate-x-5" : "translate-x-0"}`} />
+              </label>
+            </div>
 
             {notifEnabled && (
-              <p className="text-xs text-ink-mute">
+              <p className="text-xs text-ink-mute mt-3">
                 Sends once daily at 8 AM ET when skills need practice.
               </p>
             )}
 
-            {notifEnabled && (
-              <div className="mt-4 pt-3 border-t border-edge">
-                <button
-                  disabled={testEmailState === "sending"}
-                  onClick={async () => {
-                    setTestEmailState("sending");
-                    setTestEmailError(null);
-                    try {
-                      const res = await fetch("/api/notifications/send-test", { method: "POST" });
-                      if (res.ok) {
-                        setTestEmailState("sent");
-                      } else {
-                        const body = await res.json().catch(() => ({}));
-                        setTestEmailError(body.error ?? "Unknown error");
-                        setTestEmailState("error");
-                      }
-                    } catch {
-                      setTestEmailError("Network error — is the server running?");
-                      setTestEmailState("error");
-                    }
-                    setTimeout(() => { setTestEmailState("idle"); setTestEmailError(null); }, 8000);
-                  }}
-                  className="text-xs font-medium text-ink-soft hover:text-ink disabled:opacity-50 transition-colors"
-                >
-                  {testEmailState === "sending" && "Sending…"}
-                  {testEmailState === "sent" && "✓ Email sent — check your inbox"}
-                  {testEmailState === "idle" && "Send test email"}
-                </button>
-                {testEmailState === "error" && testEmailError && (
-                  <p className="text-[11px] text-red-600 mt-1.5 leading-snug">{testEmailError}</p>
-                )}
-              </div>
-            )}
-
             {notifSaving && (
-              <p className="text-[11px] text-ink-mute mt-3">Saving…</p>
+              <p className="text-[11px] text-ink-mute mt-2">Saving…</p>
             )}
           </div>
 
