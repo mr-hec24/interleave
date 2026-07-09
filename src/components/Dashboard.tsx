@@ -77,6 +77,7 @@ export default function Dashboard({
   const [notifHour, setNotifHour] = useState(8);
   const [notifTimezone, setNotifTimezone] = useState("UTC");
   const [notifSaving, setNotifSaving] = useState(false);
+  const [testEmailState, setTestEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const supabase = createClient();
 
   useEffect(() => {
@@ -813,6 +814,30 @@ export default function Dashboard({
                     {notifTimezone}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {notifEnabled && (
+              <div className="mt-4 pt-3 border-t border-edge">
+                <button
+                  disabled={testEmailState === "sending"}
+                  onClick={async () => {
+                    setTestEmailState("sending");
+                    try {
+                      const res = await fetch("/api/notifications/send-test", { method: "POST" });
+                      setTestEmailState(res.ok ? "sent" : "error");
+                    } catch {
+                      setTestEmailState("error");
+                    }
+                    setTimeout(() => setTestEmailState("idle"), 4000);
+                  }}
+                  className="text-xs font-medium text-ink-soft hover:text-ink disabled:opacity-50 transition-colors"
+                >
+                  {testEmailState === "sending" && "Sending…"}
+                  {testEmailState === "sent" && "✓ Email sent — check your inbox"}
+                  {testEmailState === "error" && "Failed — check RESEND_API_KEY"}
+                  {testEmailState === "idle" && "Send test email"}
+                </button>
               </div>
             )}
 

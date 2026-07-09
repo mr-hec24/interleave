@@ -34,9 +34,11 @@ function alreadySentToday(lastSentAt: string | null): boolean {
   return diff < 20 * 60 * 60 * 1000; // 20 hours
 }
 
+const isDev = process.env.NODE_ENV === "development";
+
 export async function GET(request: Request) {
   const resend = new Resend(process.env.RESEND_API_KEY);
-  if (!isAuthorized(request)) {
+  if (!isDev && !isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -59,8 +61,8 @@ export async function GET(request: Request) {
   for (const profile of profiles ?? []) {
     const localHour = localHourForTimezone(profile.notification_timezone ?? "UTC");
 
-    // Only send if it's this user's chosen notification hour
-    if (localHour !== (profile.notification_hour ?? 8)) continue;
+    // In dev, skip hour filter so the route always fires for easy testing
+    if (!isDev && localHour !== (profile.notification_hour ?? 8)) continue;
 
     // Skip if we already sent one in the past 20 hours
     if (alreadySentToday(profile.last_notification_sent_at)) {
