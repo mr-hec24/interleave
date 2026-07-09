@@ -76,6 +76,13 @@ export async function POST() {
     unsubscribeToken: profile.unsubscribe_token,
   });
 
+  if (!process.env.RESEND_API_KEY) {
+    return NextResponse.json(
+      { error: "RESEND_API_KEY is not set — add it in Vercel → Settings → Environment Variables, then redeploy" },
+      { status: 500 }
+    );
+  }
+
   const resend = new Resend(process.env.RESEND_API_KEY);
   const { error } = await resend.emails.send({
     from: FROM_ADDRESS,

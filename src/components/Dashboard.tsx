@@ -76,6 +76,7 @@ export default function Dashboard({
   const [notifEnabled, setNotifEnabled] = useState(true);
   const [notifSaving, setNotifSaving] = useState(false);
   const [testEmailState, setTestEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [testEmailError, setTestEmailError] = useState<string | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
@@ -779,21 +780,31 @@ export default function Dashboard({
                   disabled={testEmailState === "sending"}
                   onClick={async () => {
                     setTestEmailState("sending");
+                    setTestEmailError(null);
                     try {
                       const res = await fetch("/api/notifications/send-test", { method: "POST" });
-                      setTestEmailState(res.ok ? "sent" : "error");
+                      if (res.ok) {
+                        setTestEmailState("sent");
+                      } else {
+                        const body = await res.json().catch(() => ({}));
+                        setTestEmailError(body.error ?? "Unknown error");
+                        setTestEmailState("error");
+                      }
                     } catch {
+                      setTestEmailError("Network error — is the server running?");
                       setTestEmailState("error");
                     }
-                    setTimeout(() => setTestEmailState("idle"), 4000);
+                    setTimeout(() => { setTestEmailState("idle"); setTestEmailError(null); }, 8000);
                   }}
                   className="text-xs font-medium text-ink-soft hover:text-ink disabled:opacity-50 transition-colors"
                 >
                   {testEmailState === "sending" && "Sending…"}
                   {testEmailState === "sent" && "✓ Email sent — check your inbox"}
-                  {testEmailState === "error" && "Failed — check RESEND_API_KEY"}
                   {testEmailState === "idle" && "Send test email"}
                 </button>
+                {testEmailState === "error" && testEmailError && (
+                  <p className="text-[11px] text-red-600 mt-1.5 leading-snug">{testEmailError}</p>
+                )}
               </div>
             )}
 
