@@ -73,7 +73,27 @@ export default function Dashboard({
   const [showOnboarding, setShowOnboarding] = useState(
     initialSkills.length === 0 && initialTopics.length === 0
   );
+  const [notifEnabled, setNotifEnabled] = useState(true);
+  const [notifSaving, setNotifSaving] = useState(false);
   const supabase = createClient();
+
+  useEffect(() => {
+    supabase
+      .from("profiles")
+      .select("notifications_enabled")
+      .eq("id", user.id)
+      .single()
+      .then(({ data }) => {
+        if (data) setNotifEnabled(data.notifications_enabled ?? true);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  async function saveNotifPrefs(updates: { notifications_enabled?: boolean }) {
+    setNotifSaving(true);
+    await supabase.from("profiles").update(updates).eq("id", user.id);
+    setNotifSaving(false);
+  }
 
   useEffect(() => {
     if (!editingSkillId) return;
@@ -716,6 +736,45 @@ export default function Dashboard({
               <b className="text-tint-ink">durable memory</b> — never streaks,
               logins, or session counts.
             </p>
+          </div>
+
+          {/* Notification preferences */}
+          <div className="bg-surface border border-edge rounded-2xl p-5">
+            <div className="font-display font-semibold text-[17px] text-ink mb-1">
+              Daily reminders
+            </div>
+            <p className="text-xs text-ink-mute mb-4">
+              Get an email when skills need practice.
+            </p>
+
+            {/* Toggle */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-ink">Email reminders</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={notifEnabled}
+                  onChange={async (e) => {
+                    const next = e.target.checked;
+                    setNotifEnabled(next);
+                    await saveNotifPrefs({ notifications_enabled: next });
+                  }}
+                />
+                <div className={`w-11 h-6 rounded-full transition-colors duration-200 ${notifEnabled ? "bg-green" : "bg-edge"}`} />
+                <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${notifEnabled ? "translate-x-5" : "translate-x-0"}`} />
+              </label>
+            </div>
+
+            {notifEnabled && (
+              <p className="text-xs text-ink-mute mt-3">
+                Sends once daily at 8 AM ET when skills need practice.
+              </p>
+            )}
+
+            {notifSaving && (
+              <p className="text-[11px] text-ink-mute mt-2">Saving…</p>
+            )}
           </div>
 
           {/* Recent sessions */}
