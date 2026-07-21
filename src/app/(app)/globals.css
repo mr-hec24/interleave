@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+/* Dark mode is class-driven (toggle), not OS-driven, so users can override. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---- Daylight (light theme): warm paper & living green ---- */
+:root {
+  --paper: oklch(0.96 0.012 95);
+  --surface: oklch(0.99 0.008 95);
+  --surface-2: oklch(0.97 0.01 95);
+  --ink: oklch(0.30 0.022 150);
+  --ink-soft: oklch(0.44 0.025 150);
+  --ink-mute: oklch(0.55 0.02 145);
+  --border: oklch(0.90 0.012 110);
+  --border-strong: oklch(0.86 0.02 110);
+  --green: oklch(0.56 0.13 150);
+  --green-deep: oklch(0.45 0.12 150);
+  --green-btn: oklch(0.50 0.12 150);
+  --on-green: oklch(0.99 0.01 95);
+  --amber: oklch(0.68 0.11 108);
+  --amber-ink: oklch(0.50 0.08 108);
+  --sage: oklch(0.62 0.035 140);
+  --sage-ink: oklch(0.50 0.03 140);
+  --clay: oklch(0.62 0.10 55);
+  --clay-rim: oklch(0.46 0.06 60);
+  --bloom: oklch(0.74 0.11 350);
+  --mono: oklch(0.36 0.04 150);
+  --tint: oklch(0.97 0.018 150);
+  --tint-border: oklch(0.86 0.04 150);
+  --tint-ink: oklch(0.42 0.10 150);
+  --shadow: 0 4px 18px rgba(40, 40, 30, 0.1);
+}
+
+/* ---- Dusk (dark theme): a garden at nightfall, not an inversion ---- */
+.dark {
+  --paper: oklch(0.22 0.025 195);
+  --surface: oklch(0.29 0.028 195);
+  --surface-2: oklch(0.26 0.028 195);
+  --ink: oklch(0.93 0.015 95);
+  --ink-soft: oklch(0.82 0.02 110);
+  --ink-mute: oklch(0.70 0.02 110);
+  --border: oklch(0.36 0.03 195);
+  --border-strong: oklch(0.40 0.03 195);
+  --green: oklch(0.72 0.14 152);
+  --green-deep: oklch(0.60 0.13 152);
+  --green-btn: oklch(0.72 0.14 152);
+  --on-green: oklch(0.18 0.03 195);
+  --amber: oklch(0.79 0.12 106);
+  --amber-ink: oklch(0.79 0.12 106);
+  --sage: oklch(0.66 0.04 150);
+  --sage-ink: oklch(0.66 0.04 150);
+  --clay: oklch(0.55 0.09 50);
+  --clay-rim: oklch(0.42 0.06 50);
+  --bloom: oklch(0.80 0.10 350);
+  --mono: oklch(0.82 0.04 150);
+  --tint: oklch(0.30 0.045 152);
+  --tint-border: oklch(0.42 0.06 152);
+  --tint-ink: oklch(0.82 0.10 152);
+  --shadow: 0 4px 22px rgba(0, 0, 0, 0.28);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-mute: var(--ink-mute);
+  --color-edge: var(--border);
+  --color-edge-strong: var(--border-strong);
+  --color-green: var(--green);
+  --color-green-deep: var(--green-deep);
+  --color-green-btn: var(--green-btn);
+  --color-on-green: var(--on-green);
+  --color-amber: var(--amber);
+  --color-amber-ink: var(--amber-ink);
+  --color-sage: var(--sage);
+  --color-sage-ink: var(--sage-ink);
+  --color-clay: var(--clay);
+  --color-bloom: var(--bloom);
+  --color-mono: var(--mono);
+  --color-tint: var(--tint);
+  --color-tint-border: var(--tint-border);
+  --color-tint-ink: var(--tint-ink);
+
+  --font-display: var(--font-spectral);
+  --font-sans: var(--font-hanken);
+  --font-round: var(--font-quicksand);
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@keyframes leafgrow {
+  0% { transform: scaleY(0.12); opacity: 0.45; }
+  100% { transform: scaleY(1); opacity: 1; }
+}
+@keyframes sway {
+  0%, 100% { transform: rotate(-1.5deg); }
+  50% { transform: rotate(1.5deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
