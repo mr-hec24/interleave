@@ -29,13 +29,17 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (
-    !user &&
-    !request.nextUrl.pathname.startsWith("/login") &&
-    !request.nextUrl.pathname.startsWith("/auth") &&
-    !request.nextUrl.pathname.startsWith("/api/cron") &&
-    !request.nextUrl.pathname.startsWith("/unsubscribe")
-  ) {
+  // Everything requires a session by default, except the public landing page,
+  // the auth flow, and routes that authenticate themselves another way
+  // (cron secret, unsubscribe token).
+  const publicPathPrefixes = ["/login", "/auth", "/api/cron", "/unsubscribe"];
+  const isPublicPath =
+    request.nextUrl.pathname === "/" ||
+    publicPathPrefixes.some((path) =>
+      request.nextUrl.pathname.startsWith(path)
+    );
+
+  if (!user && !isPublicPath) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

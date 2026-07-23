@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interleaf — tend your garden of skills</title>
+<meta name="description" content="Interleaf tells multi-skill learners which skill to practice next, and for how long — so nothing you're learning quietly wilts.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --forest:#1E4D30;
+    --garden:#3E8E5A;
+    --leaf:#5BAE76;
+    --mint:#EAF6EE;
+    --sprout:#F1F6E9;
+    --paper:#F7F4EC;
+    --card:#FFFDF7;
+    --clay:#D97757;
+    --clay-deep:#B0542F;
+    --peach:#F7E1D3;
+    --line:rgba(30,77,48,0.14);
+    --line-soft:rgba(30,77,48,0.09);
+    --disp:"Fraunces",Georgia,serif;
+    --sans:"Nunito Sans",system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--paper);color:var(--forest);font-family:var(--sans);line-height:1.65;font-size:17px}
+  .wrap{max-width:940px;margin:0 auto;padding:0 26px}
+  a{color:var(--garden)}
+
+  /* ---------- nav ---------- */
+  nav{padding:22px 0}
+  .navrow{display:flex;justify-content:space-between;align-items:center}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:600;font-size:19px;color:var(--forest)}
+  .brand small{font-family:var(--sans);font-weight:600;font-size:12px;color:var(--garden);letter-spacing:.02em}
+  .navlink{font-family:var(--sans);font-weight:600;font-size:14px;color:var(--garden);text-decoration:none;
+    border:1.5px solid var(--line);padding:8px 15px;border-radius:11px}
+  .navlink:hover{border-color:var(--garden);background:var(--mint)}
+
+  /* ---------- hero ---------- */
+  header.hero{padding:52px 0 60px}
+  .eyebrow{display:inline-flex;align-items:center;gap:7px;font-family:var(--sans);font-weight:700;font-size:12.5px;
+    letter-spacing:.04em;color:var(--clay-deep);background:var(--peach);padding:6px 13px;border-radius:100px}
+  h1{font-family:var(--disp);font-weight:500;font-size:clamp(34px,5.4vw,54px);line-height:1.08;
+    letter-spacing:-.01em;margin:20px 0 20px;max-width:15ch}
+  h1 em{font-style:italic;color:var(--clay)}
+  .lede{font-size:19px;max-width:52ch;color:#33604180;color:rgba(30,77,48,.78)}
+  .lede b{font-weight:700;color:var(--forest)}
+
+  form.waitlist{display:flex;gap:10px;flex-wrap:wrap;margin-top:34px;max-width:490px}
+  form.waitlist input[type=email]{flex:1;min-width:220px;background:var(--card);border:1.5px solid var(--line);
+    color:var(--forest);font-family:var(--sans);font-size:16px;padding:14px 17px;border-radius:13px;outline:none}
+  form.waitlist input[type=email]:focus{border-color:var(--garden);box-shadow:0 0 0 3px var(--mint)}
+  form.waitlist input[type=email]::placeholder{color:rgba(30,77,48,.4)}
+  form.waitlist input[type=text]{flex:1;min-width:220px;background:var(--card);border:1.5px solid var(--line);
+    color:var(--forest);font-family:var(--sans);font-size:16px;padding:14px 17px;border-radius:13px;outline:none}
+  form.waitlist input[type=text]:focus{border-color:var(--garden);box-shadow:0 0 0 3px var(--mint)}
+  form.waitlist input[type=text]::placeholder{color:rgba(30,77,48,.4)}
+  form.waitlist button{font-family:var(--sans);font-weight:700;font-size:16px;background:var(--clay);color:#fff;
+    border:none;padding:14px 24px;border-radius:13px;cursor:pointer}
+  form.waitlist button:hover{background:var(--clay-deep)}
+  .formnote{font-size:13.5px;color:rgba(30,77,48,.55);margin-top:12px;display:flex;align-items:center;gap:6px}
+  #waitlist-status{font-size:14px;font-weight:600;margin-top:13px;display:none}
+  #waitlist-status.ok{color:var(--garden);display:block}
+  #waitlist-status.err{color:var(--clay-deep);display:block}
+
+  /* ---------- garden bed signature ---------- */
+  .bed{margin-top:52px;background:var(--card);border:1.5px solid var(--line-soft);border-radius:22px;
+    padding:26px 22px 16px;box-shadow:0 18px 40px -30px rgba(30,77,48,.5)}
+  .bed svg{display:block;width:100%;height:auto;min-width:520px}
+  .bedwrap{overflow-x:auto}
+  .bedcap{font-family:var(--sans);font-size:13.5px;color:rgba(30,77,48,.6);padding:14px 6px 4px;text-align:center}
+  .bedcap b{color:var(--clay-deep);font-weight:700}
+
+  /* ---------- sections ---------- */
+  section{padding:60px 0;border-top:1.5px solid var(--line-soft)}
+  .kicker{font-family:var(--sans);font-weight:700;font-size:12.5px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--garden);margin-bottom:14px}
+  h2{font-family:var(--disp);font-weight:500;font-size:clamp(25px,3.6vw,34px);line-height:1.15;max-width:22ch;margin-bottom:16px}
+  .sectext{font-size:17px;max-width:60ch;color:rgba(30,77,48,.8);margin-bottom:34px}
+
+ /* research findings */
+  .findings{display:grid;gap:14px}
+  .finding{background:var(--card);border:1.5px solid var(--line-soft);border-radius:16px;padding:22px 24px}
+  .finding .tag{font-family:var(--sans);font-weight:700;font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--clay-deep);margin-bottom:9px}
+  .finding h4{font-family:var(--disp);font-weight:600;font-size:19px;line-height:1.25;margin-bottom:7px}
+  .finding p{font-size:15px;color:rgba(30,77,48,.8);margin-bottom:13px;max-width:66ch}
+  .finding .cites{display:flex;flex-wrap:wrap;gap:8px}
+  .cite{display:inline-block;font-family:var(--sans);font-weight:700;font-size:12px;color:var(--garden);
+    background:var(--mint);border:1px solid var(--line-soft);border-radius:100px;padding:4px 12px}
+  .closer{font-size:17px;color:rgba(30,77,48,.85);max-width:60ch;margin-top:26px}
+  .closer b{font-weight:700;color:var(--forest)}
+
+  /* how-it-works cards */
+  .eqbar{font-family:var(--disp);font-style:italic;font-size:18px;color:var(--garden);background:var(--mint);
+    border:1.5px solid var(--line-soft);border-radius:14px;padding:16px 20px;margin-bottom:26px;overflow-x:auto;white-space:nowrap}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
+  .card{background:var(--card);border:1.5px solid var(--line-soft);border-radius:16px;padding:22px 22px 20px}
+  .card .ic{width:38px;height:38px;border-radius:11px;background:var(--sprout);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+  .card h3{font-family:var(--disp);font-weight:600;font-size:19px;margin-bottom:8px}
+  .card p{font-size:14.5px;color:rgba(30,77,48,.78)}
+
+  /* honesty */
+  .honest{border:1.5px solid var(--clay);border-radius:18px;padding:28px 28px 24px;background:rgba(217,119,87,.055)}
+  .honest .flag{display:inline-block;font-family:var(--sans);font-weight:700;font-size:11.5px;letter-spacing:.06em;
+    color:#fff;background:var(--clay);border-radius:100px;padding:5px 13px;margin-bottom:16px;text-transform:uppercase}
+  .honest p{font-size:16px;color:rgba(30,77,48,.85);margin-bottom:13px}
+  .honest p:last-child{margin-bottom:0}
+  .honest b{font-weight:700;color:var(--forest)}
+  .honest .src{font-family:var(--disp);font-style:italic;color:var(--garden)}
+
+  /* positioning */
+  blockquote{font-family:var(--disp);font-weight:500;font-size:clamp(22px,3.2vw,30px);line-height:1.3;
+    color:var(--forest);border-left:3px solid var(--clay);padding-left:24px;max-width:24ch}
+  blockquote span{display:block;font-family:var(--sans);font-weight:400;font-size:16px;line-height:1.6;
+    color:rgba(30,77,48,.72);margin-top:18px;max-width:56ch}
+
+  footer{padding:44px 0 72px}
+  .footrow{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px}
+  footer p{font-family:var(--sans);font-size:13.5px;color:rgba(30,77,48,.55)}
+
+  @media (prefers-reduced-motion: no-preference){
+    .grow{transform-origin:bottom center;animation:grow .9s cubic-bezier(.2,.8,.3,1) both}
+    .g2{animation-delay:.12s}.g3{animation-delay:.24s}
+    @keyframes grow{from{transform:scaleY(.4);opacity:0}to{transform:scaleY(1);opacity:1}}
+    .droop{animation:sway 4s ease-in-out infinite}
+    @keyframes sway{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-2deg)}}
+  }
+  @media (max-width:640px){.wrap{padding:0 18px}header.hero{padding:34px 0 44px}section{padding:46px 0}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap navrow">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 120 120" aria-hidden="true">
+        <path d="M47.6,13.6 C90,25 102.4,71.4 72.4,106.4 C29,91 16.6,44.7 47.6,13.6 Z" fill="#3E8E5A"/>
+        <path d="M71.4,102.5 C51.7,82.9 71.5,48.7 49.1,19.4" fill="none" stroke="#EAF6EE" stroke-width="6" stroke-linecap="round"/>
+      </svg>
+      Interleaf <small>· by Hec Labs</small>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <a class="navlink" href="https://github.com/mr-hec24/interleave" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow">🌱 now recruiting the private beta</span>
+    <h1>Your skills are a garden. Some are about to <em>wilt</em>.</h1>
+    <p class="lede">You don't struggle to study any one subject. You struggle to decide what to tend <b>today</b> — across everything you're growing at once. <b>Interleaf tells you which skill to practice next, and for how long</b>, so nothing you're learning quietly dies back.</p>
+
+    <form class="waitlist" id="waitlist-form" action="https://formspree.io/f/mvzeqqpy" method="POST">
+      <input type="text" name="first_name" placeholder="First name" required aria-label="First name">
+      <input type="text" name="last_name" placeholder="Last name" required aria-label="Last name">
+      <input type="email" name="email" placeholder="you@email.com" required aria-label="Email address">
+      <button type="submit">Join the waitlist</button>
+      <input type="hidden" name="_subject" value="New Interleaf waitlist signup">
+    </form>
+    <div id="waitlist-status"></div>
+    <p class="formnote">🌿 One email when the beta opens. Nothing else.</p>
+
+    <div class="bed">
+      <div class="bedwrap">
+        <svg viewBox="0 0 760 260" role="img" aria-labelledby="bedtitle beddesc">
+          <title id="bedtitle">A garden bed with three skills as plants at different health</title>
+          <desc id="beddesc">Guitar and Spanish are healthy; Python is wilting and needs watering next.</desc>
+          <!-- soil -->
+          <rect x="20" y="196" width="720" height="46" rx="14" fill="#EADFC9"/>
+          <rect x="20" y="196" width="720" height="14" rx="7" fill="#DCCBAE"/>
+          <!-- water line -->
+          <line x1="20" y1="150" x2="740" y2="150" stroke="#5BAE76" stroke-width="1.5" stroke-dasharray="5 6" opacity="0.5"/>
+          <text x="726" y="145" text-anchor="end" font-family="Nunito Sans, sans-serif" font-size="11.5" fill="#3E8E5A" opacity="0.75">thriving</text>
+
+          <!-- Plant 1: guitar (healthy tall) -->
+          <g class="grow">
+            <path d="M170,196 C170,150 168,120 168,96" stroke="#3E8E5A" stroke-width="5" fill="none" stroke-linecap="round"/>
+            <path d="M168,120 C150,116 138,100 138,82 C160,84 172,102 168,120 Z" fill="#5BAE76"/>
+            <path d="M168,108 C186,102 200,86 200,68 C178,70 166,88 168,108 Z" fill="#3E8E5A"/>
+            <path d="M168,96 C160,88 156,74 158,60 C170,66 174,84 168,96 Z" fill="#5BAE76"/>
+          </g>
+          <text x="168" y="222" text-anchor="middle" font-family="Nunito Sans, sans-serif" font-weight="700" font-size="14" fill="#1E4D30">guitar</text>
+
+          <!-- Plant 2: spanish (healthy, medium, flowering) -->
+          <g class="grow g2">
+            <path d="M380,196 C380,158 379,132 379,110" stroke="#3E8E5A" stroke-width="5" fill="none" stroke-linecap="round"/>
+            <path d="M379,140 C362,138 351,124 351,108 C371,109 383,125 379,140 Z" fill="#5BAE76"/>
+            <path d="M379,132 C396,128 408,114 408,98 C388,100 377,116 379,132 Z" fill="#3E8E5A"/>
+            <circle cx="379" cy="104" r="11" fill="#F7E1D3"/>
+            <circle cx="379" cy="104" r="5" fill="#D97757"/>
+          </g>
+          <text x="379" y="222" text-anchor="middle" font-family="Nunito Sans, sans-serif" font-weight="700" font-size="14" fill="#1E4D30">Spanish</text>
+
+          <!-- Plant 3: python (WILTING, needs water) -->
+          <g class="droop">
+            <path d="M590,196 C590,172 592,158 596,150 C600,144 606,142 612,146" stroke="#B99A6B" stroke-width="5" fill="none" stroke-linecap="round"/>
+            <path d="M596,168 C580,172 568,168 562,158 C578,150 594,156 596,168 Z" fill="#C7B98C"/>
+            <path d="M604,152 C612,146 618,136 616,126 C606,132 600,146 604,152 Z" fill="#B99A6B"/>
+          </g>
+          <!-- water drop highlight -->
+          <g>
+            <path d="M612,66 C612,66 600,80 600,90 a12 12 0 1 0 24 0 C624,80 612,66 612,66 Z" fill="#D97757"/>
+            <path d="M608,84 a4 4 0 0 0 4 6" stroke="#F7E1D3" stroke-width="2" fill="none" stroke-linecap="round"/>
+          </g>
+          <text x="612" y="222" text-anchor="middle" font-family="Nunito Sans, sans-serif" font-weight="700" font-size="14" fill="#B0542F">Python</text>
+          <text x="612" y="240" text-anchor="middle" font-family="Nunito Sans, sans-serif" font-weight="600" font-size="12" fill="#B0542F">water me next</text>
+        </svg>
+      </div>
+      <p class="bedcap">Python is closest to wilting — so it's next. <b>Interleaf decides that for you</b>, every session.</p>
+    </div>
+  </div>
+</header>
+
+
+<section id="why">
+  <div class="wrap">
+    <div class="kicker">Why the app exists</div>
+    <h2>Left to ourselves, we tend the garden badly.</h2>
+    <p class="sectext">Interleaf decides for you not because you can't learn — but because decades of evidence show that good scheduling runs against our instincts. When learners are handed the controls, they reliably make the same wrong calls.</p>
+
+    <div class="findings">
+      <div class="finding">
+        <div class="tag">What we actually do</div>
+        <h4>We reach for cramming and rereading — the strategies that fade fastest.</h4>
+        <p>Surveys of real students find that last-minute cramming and rereading dominate, even though they produce some of the least durable learning. We keep choosing them because, in the moment, they feel productive.</p>
+        <div class="cites">
+          <span class="cite">Hartwig &amp; Dunlosky, 2012</span>
+          <span class="cite">Bjork, Dunlosky &amp; Kornell, 2013</span>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div class="tag">The illusion</div>
+        <h4>A leaf that looks green isn't a healthy root.</h4>
+        <p>When material feels fluent while you study, it feels like learning — but that fluency barely predicts what you'll actually remember later. Mistaking ease for mastery is one of the most robust findings in the field.</p>
+        <div class="cites"><span class="cite">Bjork, Dunlosky &amp; Kornell, 2013</span></div>
+      </div>
+
+      <div class="finding">
+        <div class="tag">The preference</div>
+        <h4>We pick the worse method even right after watching it lose.</h4>
+        <p>When practice is mixed, people learn more yet believe they learned less — so they choose the blocked practice that works worse, moments after the mixed version outperformed it in front of them.</p>
+        <div class="cites"><span class="cite">Kornell &amp; Bjork, 2008</span></div>
+      </div>
+
+      <div class="finding">
+        <div class="tag">The trap</div>
+        <h4>The more alike our skills look, the worse we choose.</h4>
+        <p>When categories resemble one another, learners lean even harder into studying them one at a time — exactly the situation where mixing would have helped most.</p>
+        <div class="cites"><span class="cite">Tauber et al., 2020</span></div>
+      </div>
+    </div>
+
+    <p class="closer">This is the gap Interleaf fills. It isn't that you can't tend your garden — it's that <b>good scheduling fights your instincts every single session</b>. So the app makes those calls, and you just tend what it hands you.</p>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="kicker">How it works</div>
+    <h2>One score decides which plant to water.</h2>
+    <p class="sectext">Every skill is scored, every session, on four things. The one that needs you most wins — with a little patience built in, so the recommendation doesn't flit around mid-session.</p>
+
+    <div class="eqbar">score = α · thirst − β · fatigue + γ · readiness − λ · crowding</div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="ic">💧</div>
+        <h3>Thirst</h3>
+        <p>How close a skill is to being forgotten — measured from real graded recall, never a hopeful self-rating (which research shows runs overconfident).</p>
+      </div>
+      <div class="card">
+        <div class="ic">🍃</div>
+        <h3>Fatigue</h3>
+        <p>Four separate beds — logical, verbal, visual, fine-motor — so moving from Python to guitar can rest one part of your mind while another works.</p>
+      </div>
+      <div class="card">
+        <div class="ic">☀️</div>
+        <h3>Readiness</h3>
+        <p>A skill that needs an unmet prerequisite is kept out of the bed entirely — you're never sent to tend something that can't grow yet.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="honest">
+  <div class="wrap">
+    <div class="kicker">The part most study apps won't tell you</div>
+    <h2>The famous “interleaving effect” doesn't apply across a garden. We say so.</h2>
+    <div class="honest">
+      <span class="flag">Novel — being tested, not assumed</span>
+      <p>The interleaving effect you've read about — mixing practice to sharpen the difference between similar things — needs <b>confusable material</b> (<span class="src">Brunmair &amp; Richter, 2019</span>). Guitar, Spanish, and Python aren't confusable, so we don't claim that effect for cross-domain switching — and you should doubt anyone who does.</p>
+      <p>What Interleaf actually claims across unrelated skills is narrower and honest: <b>forced spacing</b>, <b>helpful variety</b>, and <b>resting different parts of your attention</b>. Every session is logged precisely so this can be measured on real learners — not asserted and left to grow wild.</p>
+      <p>Real citations, on screen, always. That's a root of the brand, not a footnote.</p>
+    </div>
+  </div>
+</section>
+
+<section id="positioning" style="border-bottom:none">
+  <div class="wrap">
+    <div class="kicker">Positioning</div>
+    <blockquote>
+      The practice conductor for multi-skill learners.
+      <span>Anki tells you when to review a card. Interleaf tells you which skill to practice next, and for how long — across your whole learning life. No other tool tends the garden as a whole. That's the open ground.</span>
+    </blockquote>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap footrow">
+    <p>Interleaf · by Hec Labs · open algorithms, hosted service paid</p>
+    <p><a href="https://github.com/mr-hec24/interleave" target="_blank" rel="noopener">github.com/mr-hec24/interleave</a></p>
+  </div>
+</footer>
+
+<script>
+  const form = document.getElementById('waitlist-form');
+  const status = document.getElementById('waitlist-status');
+  form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    status.className=''; status.textContent='';
+    try{
+      const res = await fetch(form.action,{method:'POST',body:new FormData(form),headers:{'Accept':'application/json'}});
+      if(res.ok){ status.textContent="You're on the list — thanks. 🌱"; status.className='ok'; form.reset(); }
+      else{ status.textContent="Couldn't submit — check the form is connected, or email hello@ directly."; status.className='err'; }
+    }catch(err){ status.textContent="Couldn't submit — check the form is connected, or email hello@ directly."; status.className='err'; }
+  });
+</script>
+
+</body>
+</html>
