@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Plant from "@/components/Plant";
 
 // Bright leaf palette so decorative plants pop on the deep-green panel in
@@ -148,6 +149,19 @@ export default function LoginPage() {
         <p className="text-sm text-ink-soft mt-1.5 mb-7">
           {isSignUp ? "Free to start. No credit card." : "Enter your details to continue."}
         </p>
+
+        {isSignUp && (
+          <div className="mb-6 rounded-xl border border-amber/30 bg-amber/10 px-4 py-3">
+            <p className="text-[13px] leading-relaxed text-ink-soft">
+              <span className="font-semibold text-ink">Interleaf is currently in private beta.</span>{" "}
+              New accounts aren&apos;t open yet —{" "}
+              <Link href="/" className="text-green-deep font-semibold hover:underline">
+                join the waitlist
+              </Link>{" "}
+              on the landing page to get notified when they are.
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {isSignUp && (
