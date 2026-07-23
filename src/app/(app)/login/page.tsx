@@ -128,7 +128,7 @@ export default function LoginPage() {
       if (error) {
         setError(error.message || `Sign-in failed (${error.status})`);
       } else {
-        router.push("/");
+        router.push("/dashboard");
         router.refresh();
       }
     }
