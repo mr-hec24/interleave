@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import { rankSkills, formatReasonText } from "@/lib/scheduler";
+import { rankSkills, formatReasonText, R_THRESHOLD } from "@/lib/scheduler";
 import type { SchedulerRecommendation } from "@/lib/scheduler";
 import { healthFromRec, retrPct } from "@/lib/health";
 import SkillForm from "./SkillForm";
@@ -11,6 +11,7 @@ import SessionForm from "./SessionForm";
 import TopicForm from "./TopicForm";
 import Plant from "./Plant";
 import ThemeToggle from "./ThemeToggle";
+import OnboardingModal from "./OnboardingModal";
 
 interface Skill {
   id: string;
@@ -68,7 +69,47 @@ export default function Dashboard({
   const [showTopicForm, setShowTopicForm] = useState(false);
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [loggingSkillId, setLoggingSkillId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(
+    initialSkills.length === 0 && initialTopics.length === 0
+  );
+  const [notifEnabled, setNotifEnabled] = useState(true);
+  const [notifSaving, setNotifSaving] = useState(false);
   const supabase = createClient();
+
+  useEffect(() => {
+    supabase
+      .from("profiles")
+      .select("notifications_enabled")
+      .eq("id", user.id)
+      .single()
+      .then(({ data }) => {
+        if (data) setNotifEnabled(data.notifications_enabled ?? true);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  async function saveNotifPrefs(updates: { notifications_enabled?: boolean }) {
+    setNotifSaving(true);
+    await supabase.from("profiles").update(updates).eq("id", user.id);
+    setNotifSaving(false);
+  }
+
+  useEffect(() => {
+    if (!editingSkillId) return;
+    const scrollY = window.scrollY;
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      document.body.style.overflow = "";
+      window.scrollTo(0, scrollY);
+    };
+  }, [editingSkillId]);
 
   const topicOptions = topics.map((t) => ({ id: t.id, name: t.name }));
 
@@ -88,6 +129,40 @@ export default function Dashboard({
   const recById = new Map(recommendations.map((r) => [r.skillId, r]));
   const topRec = recommendations.length > 0 ? recommendations[0] : null;
 
+  const isDoneForToday =
+    skills.length > 0 &&
+    recommendations.length > 0 &&
+    recommendations.every((r) => !r.isNew && r.priorityScore === 0);
+
+  const nextDueRec = isDoneForToday
+    ? recommendations.reduce((soonest, rec) => {
+        const dSoonest =
+          Math.max(soonest.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+          (soonest.daysSinceReview ?? 0);
+        const dRec =
+          Math.max(rec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+          (rec.daysSinceReview ?? 0);
+        return dRec < dSoonest ? rec : soonest;
+      })
+    : null;
+
+  const comebackLabel = (() => {
+    if (!nextDueRec) return null;
+    const daysUntil =
+      Math.max(nextDueRec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+      (nextDueRec.daysSinceReview ?? 0);
+    const date = new Date();
+    date.setDate(date.getDate() + Math.max(1, Math.ceil(daysUntil)));
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    if (date.toDateString() === tomorrow.toDateString()) return "tomorrow";
+    return date.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+  })();
+
   // Garden-health stats
   const reviewed = recommendations.filter((r) => !r.isNew);
   const avgRetr =
@@ -99,6 +174,48 @@ export default function Dashboard({
   const floweringCount = recommendations.filter(
     (r) => healthFromRec(r) === "flowering"
   ).length;
+
+  const handleOnboardingComplete = useCallback(
+    async ({ topicName, skillName }: { topicName: string; skillName: string }) => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Create topic
+      const { data: newTopic } = await supabase
+        .from("topics")
+        .insert({ user_id: user.id, name: topicName })
+        .select()
+        .single();
+
+      // Create skill under that topic
+      if (newTopic) {
+        await supabase.from("skills").insert({
+          user_id: user.id,
+          name: skillName,
+          topic_id: newTopic.id,
+          default_session_minutes: 25,
+        });
+      }
+
+      setShowOnboarding(false);
+      // Reload fresh data so sr_state row (created by DB trigger) is present
+      const { data: newSkills } = await supabase
+        .from("skills")
+        .select("*, sr_state(*)")
+        .is("archived_at", null)
+        .order("created_at", { ascending: true });
+      const { data: newTopics } = await supabase
+        .from("topics")
+        .select("*")
+        .is("archived_at", null)
+        .order("created_at", { ascending: true });
+      if (newSkills) setSkills(newSkills);
+      if (newTopics) setTopics(newTopics);
+    },
+    [supabase]
+  );
 
   const refreshData = useCallback(async () => {
     const { data: newSkills } = await supabase
@@ -185,9 +302,12 @@ export default function Dashboard({
 
   return (
     <div className="min-h-screen bg-paper">
+      {showOnboarding && (
+        <OnboardingModal onComplete={handleOnboardingComplete} />
+      )}
       {/* Header */}
-      <header className="h-16 bg-surface border-b border-edge">
-        <div className="max-w-5xl mx-auto h-full px-6 flex items-center justify-between">
+      <header className="bg-surface border-b border-edge">
+        <div className="max-w-5xl mx-auto h-16 px-6 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <svg width="26" height="26" viewBox="0 0 120 120" aria-hidden="true">
               <path
@@ -206,7 +326,9 @@ export default function Dashboard({
               interleaf
             </span>
           </div>
-          <div className="flex items-center gap-4">
+
+          {/* Desktop controls */}
+          <div className="hidden md:flex items-center gap-4">
             <div
               role="tablist"
               aria-label="Dashboard view"
@@ -238,14 +360,87 @@ export default function Dashboard({
               {(user.email ?? "?")[0].toUpperCase()}
             </button>
           </div>
+
+          {/* Mobile hamburger */}
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="md:hidden w-9 h-9 flex items-center justify-center rounded-lg text-ink-soft hover:text-ink hover:bg-surface-2 transition-colors"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              {menuOpen ? (
+                <path d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" />
+              ) : (
+                <path fillRule="evenodd" clipRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
+              )}
+            </svg>
+          </button>
         </div>
+
+        {/* Mobile dropdown */}
+        {menuOpen && (
+          <div className="md:hidden border-t border-edge px-6 py-4 flex flex-col gap-4">
+            <div
+              role="tablist"
+              aria-label="Dashboard view"
+              className="flex bg-surface-2 border border-edge rounded-full p-1 self-start"
+            >
+              {(["garden", "data"] as const).map((v) => (
+                <button
+                  key={v}
+                  role="tab"
+                  aria-selected={view === v}
+                  onClick={() => { setView(v); setMenuOpen(false); }}
+                  className={`text-sm font-semibold px-4 py-1.5 rounded-full capitalize transition-colors ${
+                    view === v
+                      ? "bg-green text-on-green"
+                      : "text-ink-soft hover:text-ink"
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <ThemeToggle />
+              <button
+                onClick={handleSignOut}
+                className="text-sm font-medium text-ink-soft hover:text-ink"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-7 grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-7">
         {/* Left column */}
         <div className="space-y-7">
-          {/* Water this next */}
-          {topRec && (
+          {/* Water this next / Done for today */}
+          {isDoneForToday ? (
+            <div className="bg-tint border border-tint-border rounded-2xl p-6 sm:p-7">
+              <div className="inline-flex items-center gap-2 bg-surface/60 rounded-full px-3 py-1 mb-3">
+                <span className="text-sm" aria-hidden="true">✿</span>
+                <span className="text-[11px] font-bold tracking-wide uppercase text-tint-ink">
+                  Garden tended
+                </span>
+              </div>
+              <div className="font-display font-semibold text-2xl sm:text-3xl text-ink leading-tight">
+                You&apos;re done for today
+              </div>
+              <p className="text-[15px] text-ink-soft mt-2 leading-relaxed">
+                Every skill is above the 85% recall threshold. Rest now — consolidation happens between sessions, not during them.
+              </p>
+              {nextDueRec && comebackLabel && (
+                <p className="text-sm font-medium text-tint-ink mt-4 bg-surface/60 rounded-xl px-4 py-3 inline-block">
+                  Come back {comebackLabel} —{" "}
+                  <span className="font-semibold">{nextDueRec.skillName}</span>{" "}
+                  will need watering first.
+                </p>
+              )}
+            </div>
+          ) : topRec ? (
             <div className="bg-tint border border-tint-border rounded-2xl p-6 sm:p-7 flex flex-col sm:flex-row gap-6 items-center">
               <div className="flex-shrink-0">{plantFor(skills.find((s) => s.id === topRec.skillId)!, 86)}</div>
               <div className="flex-1 min-w-0">
@@ -274,7 +469,7 @@ export default function Dashboard({
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
 
           {/* GARDEN VIEW */}
           {view === "garden" && (
@@ -470,10 +665,12 @@ export default function Dashboard({
           {/* Today's schedule */}
           <div className="bg-surface border border-edge rounded-2xl p-5">
             <div className="font-display font-semibold text-[17px] text-ink">
-              Today&apos;s schedule
+              {isDoneForToday ? "All rested ✿" : "Today’s schedule"}
             </div>
             <p className="text-xs text-ink-mute mt-0.5 mb-3.5">
-              Chosen by the scheduler — the reasoning is always visible.
+              {isDoneForToday
+                ? "Nothing is due — every skill is above the recall threshold."
+                : "Chosen by the scheduler — the reasoning is always visible."}
             </p>
             {recommendations.length === 0 ? (
               <p className="text-xs text-ink-mute">Nothing scheduled yet.</p>
@@ -541,6 +738,45 @@ export default function Dashboard({
             </p>
           </div>
 
+          {/* Notification preferences */}
+          <div className="bg-surface border border-edge rounded-2xl p-5">
+            <div className="font-display font-semibold text-[17px] text-ink mb-1">
+              Daily reminders
+            </div>
+            <p className="text-xs text-ink-mute mb-4">
+              Get an email when skills need practice.
+            </p>
+
+            {/* Toggle */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-ink">Email reminders</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={notifEnabled}
+                  onChange={async (e) => {
+                    const next = e.target.checked;
+                    setNotifEnabled(next);
+                    await saveNotifPrefs({ notifications_enabled: next });
+                  }}
+                />
+                <div className={`w-11 h-6 rounded-full transition-colors duration-200 ${notifEnabled ? "bg-green" : "bg-edge"}`} />
+                <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${notifEnabled ? "translate-x-5" : "translate-x-0"}`} />
+              </label>
+            </div>
+
+            {notifEnabled && (
+              <p className="text-xs text-ink-mute mt-3">
+                Sends once daily at 8 AM ET when skills need practice.
+              </p>
+            )}
+
+            {notifSaving && (
+              <p className="text-[11px] text-ink-mute mt-2">Saving…</p>
+            )}
+          </div>
+
           {/* Recent sessions */}
           {sessions.length > 0 && (
             <div className="bg-surface border border-edge rounded-2xl p-5">
@@ -569,27 +805,29 @@ export default function Dashboard({
 
       {/* Edit-skill modal-ish (inline form) */}
       {editingSkillId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-md">
-            <SkillForm
-              skill={{
-                id: editingSkillId,
-                name: skills.find((s) => s.id === editingSkillId)?.name ?? "",
-                description:
-                  skills.find((s) => s.id === editingSkillId)?.description ?? null,
-                default_session_minutes:
-                  skills.find((s) => s.id === editingSkillId)
-                    ?.default_session_minutes ?? 25,
-                topic_id:
-                  skills.find((s) => s.id === editingSkillId)?.topic_id ?? null,
-              }}
-              topics={topicOptions}
-              onCreated={() => {
-                setEditingSkillId(null);
-                refreshData();
-              }}
-              onCancel={() => setEditingSkillId(null)}
-            />
+        <div className="fixed inset-0 bg-black/50 overflow-y-auto z-50">
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div className="w-full max-w-md">
+              <SkillForm
+                skill={{
+                  id: editingSkillId,
+                  name: skills.find((s) => s.id === editingSkillId)?.name ?? "",
+                  description:
+                    skills.find((s) => s.id === editingSkillId)?.description ?? null,
+                  default_session_minutes:
+                    skills.find((s) => s.id === editingSkillId)
+                      ?.default_session_minutes ?? 25,
+                  topic_id:
+                    skills.find((s) => s.id === editingSkillId)?.topic_id ?? null,
+                }}
+                topics={topicOptions}
+                onCreated={() => {
+                  setEditingSkillId(null);
+                  refreshData();
+                }}
+                onCancel={() => setEditingSkillId(null)}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -597,12 +835,51 @@ export default function Dashboard({
       {/* Session modal */}
       {loggingSkillId &&
         (() => {
+          // Only offer "switch to next" for skills that are actually due or new
           const nextRec = recommendations.find(
-            (r) => r.skillId !== loggingSkillId
+            (r) => r.skillId !== loggingSkillId && (r.isNew || r.priorityScore > 0)
           );
+          const loggingRec = recommendations.find((r) => r.skillId === loggingSkillId);
+          const isLastDueSkill =
+            !nextRec && loggingRec != null && (loggingRec.isNew || loggingRec.priorityScore > 0);
+
+          // After the last session, find which resting skill will expire soonest
+          const restingOthers = recommendations.filter(
+            (r) => r.skillId !== loggingSkillId && !r.isNew && r.priorityScore === 0
+          );
+          const gardenNextDueRec =
+            isLastDueSkill && restingOthers.length > 0
+              ? restingOthers.reduce((soonest, rec) => {
+                  const dS =
+                    Math.max(soonest.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+                    (soonest.daysSinceReview ?? 0);
+                  const dR =
+                    Math.max(rec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+                    (rec.daysSinceReview ?? 0);
+                  return dR < dS ? rec : soonest;
+                })
+              : null;
+          const gardenComebackLabel = (() => {
+            if (!gardenNextDueRec) return null;
+            const daysUntil =
+              Math.max(gardenNextDueRec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
+              (gardenNextDueRec.daysSinceReview ?? 0);
+            const date = new Date();
+            date.setDate(date.getDate() + Math.max(1, Math.ceil(daysUntil)));
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            if (date.toDateString() === tomorrow.toDateString()) return "tomorrow";
+            return date.toLocaleDateString("en-US", {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+            });
+          })();
+
           const skill = skills.find((s) => s.id === loggingSkillId);
           return (
             <SessionForm
+              key={loggingSkillId}
               skillId={loggingSkillId}
               skillName={skill?.name ?? ""}
               defaultMinutes={skill?.default_session_minutes ?? 25}
@@ -615,6 +892,9 @@ export default function Dashboard({
                     }
                   : undefined
               }
+              gardenComplete={isLastDueSkill}
+              comebackLabel={gardenComebackLabel}
+              nextDueSkillName={gardenNextDueRec?.skillName ?? null}
               onLogged={() => {
                 setLoggingSkillId(null);
                 refreshData();
