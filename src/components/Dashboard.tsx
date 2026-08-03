@@ -7,7 +7,7 @@ import { rankSkills, formatReasonText, daysUntilDue } from "@/lib/scheduler";
 import type { SchedulerRecommendation } from "@/lib/scheduler";
 import { healthFromRec, retrPct } from "@/lib/health";
 import SkillForm from "./SkillForm";
-import SessionForm from "./SessionForm";
+import PracticeSession from "./PracticeSession";
 import TopicForm from "./TopicForm";
 import Plant from "./Plant";
 import ThemeToggle from "./ThemeToggle";
@@ -19,7 +19,7 @@ interface Skill {
   id: string;
   name: string;
   description: string | null;
-  default_session_minutes: number;
+
   topic_id: string | null;
   sr_state: {
     repetitions: number;
@@ -146,7 +146,7 @@ export default function Dashboard({
       lastReviewedAt: s.sr_state?.last_reviewed_at
         ? new Date(s.sr_state.last_reviewed_at)
         : null,
-      defaultSessionMinutes: s.default_session_minutes,
+      defaultSessionMinutes: 25,
     })),
     new Date()
   );
@@ -199,7 +199,7 @@ export default function Dashboard({
           user_id: user.id,
           name: skillName,
           topic_id: newTopic.id,
-          default_session_minutes: 25,
+
         });
       }
 
@@ -830,9 +830,6 @@ export default function Dashboard({
                   name: skills.find((s) => s.id === editingSkillId)?.name ?? "",
                   description:
                     skills.find((s) => s.id === editingSkillId)?.description ?? null,
-                  default_session_minutes:
-                    skills.find((s) => s.id === editingSkillId)
-                      ?.default_session_minutes ?? 25,
                   topic_id:
                     skills.find((s) => s.id === editingSkillId)?.topic_id ?? null,
                 }}
@@ -872,56 +869,17 @@ export default function Dashboard({
         />
       )}
 
-      {/* Session modal */}
-      {loggingSkillId &&
-        (() => {
-          // Only offer "switch to next" for skills that are actually due or new
-          const nextRec = recommendations.find(
-            (r) => r.skillId !== loggingSkillId && (r.isNew || r.priorityScore > 0)
-          );
-          const loggingRec = recommendations.find((r) => r.skillId === loggingSkillId);
-          const isLastDueSkill =
-            !nextRec && loggingRec != null && (loggingRec.isNew || loggingRec.priorityScore > 0);
-
-          // After the last session, find which resting skill will expire soonest
-          const restingOthers = recommendations.filter(
-            (r) => r.skillId !== loggingSkillId && !r.isNew && r.priorityScore === 0
-          );
-          const gardenNextDueRec =
-            isLastDueSkill && restingOthers.length > 0
-              ? restingOthers.reduce((soonest, rec) =>
-                  daysUntilDue(rec) < daysUntilDue(soonest) ? rec : soonest
-                )
-              : null;
-          const gardenComebackLabel = formatComebackLabel(gardenNextDueRec);
-
-          const skill = skills.find((s) => s.id === loggingSkillId);
-          return (
-            <SessionForm
-              key={loggingSkillId}
-              skillId={loggingSkillId}
-              skillName={skill?.name ?? ""}
-              defaultMinutes={skill?.default_session_minutes ?? 25}
-              nextSkillName={nextRec?.skillName ?? null}
-              onSwitchToNext={
-                nextRec
-                  ? () => {
-                      refreshData();
-                      setLoggingSkillId(nextRec.skillId);
-                    }
-                  : undefined
-              }
-              gardenComplete={isLastDueSkill}
-              comebackLabel={gardenComebackLabel}
-              nextDueSkillName={gardenNextDueRec?.skillName ?? null}
-              onLogged={() => {
-                setLoggingSkillId(null);
-                refreshData();
-              }}
-              onCancel={() => setLoggingSkillId(null)}
-            />
-          );
-        })()}
+      {/* Practice session — open-ended, ended by the controller (§7) */}
+      {loggingSkillId && (
+        <PracticeSession
+          key={loggingSkillId}
+          initialSkillId={loggingSkillId === "__auto__" ? null : loggingSkillId}
+          onExit={() => {
+            setLoggingSkillId(null);
+            refreshData();
+          }}
+        />
+      )}
     </div>
   );
 }
