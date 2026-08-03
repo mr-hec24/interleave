@@ -201,19 +201,15 @@ export default function SessionForm({
     const now = new Date();
     const dueAt = new Date(now.getTime() + after.intervalDays * 86400000);
 
+    // The SM-2 before/after columns are gone: they had no counterpart in the v1
+    // memory model and nothing downstream consumed them. What replaces them is
+    // model state on the event row itself, written by the v1 session flow.
     const { error: sessionError } = await supabase.from("sessions").insert({
       user_id: user.id,
       skill_id: skillId,
       duration_minutes: actualMinutes,
       quality,
       note: note.trim() || null,
-      sm2_repetitions_before: before.repetitions,
-      sm2_ease_before: before.easeFactor,
-      sm2_interval_before: before.intervalDays,
-      sm2_repetitions_after: after.repetitions,
-      sm2_ease_after: after.easeFactor,
-      sm2_interval_after: after.intervalDays,
-      due_at_after: dueAt.toISOString(),
     });
     if (sessionError) {
       setError(sessionError.message);
