@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "simulate": "tsx scripts/simulate.ts",
     "simulate:csv": "tsx scripts/simulate.ts --csv",
-    "simulate:seed": "tsx scripts/simulate.ts --seed"
+    "simulate:seed": "tsx scripts/simulate.ts --seed",
+    "calibration": "tsx scripts/calibration.ts",
+    "calibration:csv": "tsx scripts/calibration.ts --csv"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
