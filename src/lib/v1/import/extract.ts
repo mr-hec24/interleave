@@ -196,6 +196,12 @@ export interface ExtractionInput {
   material: string;
   /** Optional topic name for context. */
   topicName?: string;
+  /**
+   * Reasoning depth. Extraction is a structured-transcription task rather than a
+   * reasoning one, and the platform's function timeout is a hard ceiling, so this
+   * defaults below the API default. See the route for the budget it has to fit.
+   */
+  effort?: "low" | "medium" | "high";
 }
 
 /**
@@ -218,6 +224,7 @@ export async function extractSkillGraph(
     thinking: { type: "adaptive" },
     system: SYSTEM_PROMPT,
     output_config: {
+      effort: input.effort ?? "low",
       format: { type: "json_schema", schema: EXTRACTION_SCHEMA },
     },
     messages: [
@@ -305,6 +312,134 @@ export async function suggestCues(
     .map((c) => (c ?? "").trim())
     .filter((c) => c.length > 0)
     .slice(0, 5);
+}
+
+/**
+ * Chunk size, in characters.
+ *
+ * Set by two constraints pulling in opposite directions. Above it, a single request
+ * runs past the platform's 60-second function ceiling. Below it, there is too little
+ * surrounding context for the model to tell a topic from a passing mention.
+ *
+ * Measured: ~3.5k characters extracts in roughly 33s at `low` effort, which leaves
+ * comfortable headroom. Larger inputs did stay under the clock at `low`, but only by
+ * summarising — a 7k-character syllabus yielded 12 skills in one pass versus 25 when
+ * given room. Under-extracting silently is worse than timing out loudly, so we chunk
+ * rather than lean on effort alone.
+ */
+export const CHUNK_CHARS = 3500;
+
+/**
+ * Splits material on blank lines, packing whole paragraphs into chunks.
+ *
+ * Never splits mid-paragraph: a week's entry cut in half yields two half-topics, and
+ * the model has no way to know it was handed a fragment. A single paragraph longer
+ * than the budget is passed through oversized rather than severed — better one slow
+ * request than two incoherent ones.
+ */
+export function chunkMaterial(material: string, maxChars = CHUNK_CHARS): string[] {
+  const paragraphs = material.split(/\n\s*\n/).filter((p) => p.trim());
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const p of paragraphs) {
+    if (current && current.length + p.length + 2 > maxChars) {
+      chunks.push(current);
+      current = p;
+    } else {
+      current = current ? `${current}\n\n${p}` : p;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length > 0 ? chunks : [material];
+}
+
+/**
+ * Merges per-chunk extractions into one proposal.
+ *
+ * Chunk-local keys are re-namespaced so two chunks cannot collide, and skills are
+ * de-duplicated by name — a syllabus that revisits a topic in weeks 3 and 11 should
+ * produce one skill with a pooled set of cues, not two competing ones. Cues from a
+ * duplicate are merged into the survivor rather than discarded, since a second
+ * mention usually phrases the retrieval differently and that variety is worth having.
+ *
+ * Known limitation, stated rather than hidden: a prerequisite whose two endpoints
+ * land in different chunks is never proposed, because no single request saw both.
+ * Edges are user-confirmed and default to off anyway, so a missing suggestion costs
+ * less than a wrong one — but it does mean chunked imports propose fewer edges than
+ * a single pass would.
+ */
+export function mergeExtractions(parts: readonly ExtractionResult[]): ExtractionResult {
+  const byName = new Map<string, ExtractedSkill>();
+  const keyRemap = new Map<string, string>();
+
+  parts.forEach((part, i) => {
+    for (const skill of part.skills) {
+      const globalKey = `c${i}_${skill.key}`;
+      const nameKey = skill.name.trim().toLowerCase();
+      const existing = byName.get(nameKey);
+
+      if (existing) {
+        keyRemap.set(globalKey, existing.key);
+        const seen = new Set(existing.retrievalCues.map((c) => c.trim().toLowerCase()));
+        for (const cue of skill.retrievalCues) {
+          if (!seen.has(cue.trim().toLowerCase())) {
+            existing.retrievalCues.push(cue);
+            seen.add(cue.trim().toLowerCase());
+          }
+        }
+      } else {
+        keyRemap.set(globalKey, globalKey);
+        byName.set(nameKey, { ...skill, key: globalKey, retrievalCues: [...skill.retrievalCues] });
+      }
+    }
+  });
+
+  const skills = [...byName.values()].map((s) => ({
+    ...s,
+    // Re-apply the pool cap after merging: a topic mentioned in three chunks could
+    // otherwise accumulate a dozen cues, which is a different skill shape than the
+    // 3–5 the prompt asks for.
+    retrievalCues: s.retrievalCues.slice(0, 5),
+  }));
+
+  const validKeys = new Set(skills.map((s) => s.key));
+  const edges: ExtractedEdge[] = [];
+  const rejectedEdges: ExtractionResult["rejectedEdges"] = [];
+  const seenEdges = new Set<string>();
+
+  parts.forEach((part, i) => {
+    for (const edge of part.edges) {
+      const skillKey = keyRemap.get(`c${i}_${edge.skillKey}`);
+      const prereqKey = keyRemap.get(`c${i}_${edge.prereqKey}`);
+      if (!skillKey || !prereqKey || !validKeys.has(skillKey) || !validKeys.has(prereqKey)) {
+        continue;
+      }
+      // De-duplication can collapse an edge onto itself once two chunk-local skills
+      // turn out to be the same topic.
+      if (skillKey === prereqKey) continue;
+      const id = `${prereqKey}→${skillKey}`;
+      if (seenEdges.has(id)) continue;
+
+      const candidate = { ...edge, skillKey, prereqKey };
+      const { acyclic, cycle } = findCycle([
+        ...edges.map((x) => ({ skillId: x.skillKey, prereqSkillId: x.prereqKey })),
+        { skillId: skillKey, prereqSkillId: prereqKey },
+      ]);
+      if (!acyclic) {
+        rejectedEdges.push({
+          edge: candidate,
+          reason: `would create a circular dependency: ${cycle!.join(" → ")}`,
+        });
+        continue;
+      }
+      seenEdges.add(id);
+      edges.push(candidate);
+    }
+    rejectedEdges.push(...part.rejectedEdges);
+  });
+
+  return { skills, edges, rejectedEdges };
 }
 
 interface RawExtraction {

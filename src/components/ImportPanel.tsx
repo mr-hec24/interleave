@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { chunkMaterial, mergeExtractions } from "@/lib/v1/import/extract";
 
 interface ExtractedSkill {
   key: string;
@@ -47,26 +48,69 @@ export default function ImportPanel({ topics, onImported, onCancel }: Props) {
   const [edgesKept, setEdgesKept] = useState<Set<string>>(new Set());
   const [cueEdits, setCueEdits] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const edgeId = (e: ExtractedEdge) => `${e.prereqKey}→${e.skillKey}`;
   const nameFor = (key: string) =>
     proposal?.skills.find((s) => s.key === key)?.name ?? key;
 
+  /**
+   * Runs the import a section at a time.
+   *
+   * Chunking is not an optimisation. A whole syllabus in one request runs past the
+   * platform's 60-second function ceiling, and the way it fails is worse than a
+   * timeout: forced to answer inside the budget, the model summarises, and a 7k
+   * syllabus quietly yields half the skills it should. Splitting keeps every request
+   * comfortably inside the limit AND gives each section room to be covered properly.
+   *
+   * It also makes the wait honest. A single 90-second call behind a spinner is
+   * indistinguishable from a hang, which is presumably what you just saw.
+   */
   async function runExtraction() {
     setLoading(true);
     setError(null);
+    setProgress(null);
+
     try {
-      const res = await fetch("/api/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          material,
-          topicName: topics.find((t) => t.id === topicId)?.name,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Import failed.");
+      const chunks = chunkMaterial(material);
+      const results: Proposal[] = [];
+
+      for (let i = 0; i < chunks.length; i++) {
+        setProgress({ done: i, total: chunks.length });
+        const res = await fetch("/api/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            material: chunks[i],
+            topicName: topics.find((t) => t.id === topicId)?.name,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          // Partial success is still worth keeping — the learner can accept what
+          // was found and re-run the rest, rather than losing several minutes of
+          // extraction to one bad section.
+          if (results.length > 0) {
+            setError(
+              `Section ${i + 1} of ${chunks.length} failed (${data.error}). ` +
+                `Showing what the earlier sections found.`
+            );
+            break;
+          }
+          throw new Error(data.error ?? "Import failed.");
+        }
+        results.push(data);
+      }
+      setProgress(null);
+
+      const data = mergeExtractions(results);
+      if (data.skills.length === 0) {
+        throw new Error(
+          "No practisable skills could be drawn from that material. It may be too " +
+            "general — an outline of specific topics works better than a summary."
+        );
+      }
 
       setProposal(data);
       setSkillsKept(new Set(data.skills.map((s: ExtractedSkill) => s.key)));
@@ -203,7 +247,11 @@ export default function ImportPanel({ topics, onImported, onCancel }: Props) {
                   disabled={loading || !material.trim()}
                   className="self-end font-semibold text-on-green bg-green-btn rounded-xl px-6 py-3 disabled:opacity-50"
                 >
-                  {loading ? "Reading your material…" : "Find skills"}
+                  {loading
+                    ? progress
+                      ? `Reading section ${progress.done + 1} of ${progress.total}…`
+                      : "Reading your material…"
+                    : "Find skills"}
                 </button>
               </>
             ) : (
