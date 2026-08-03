@@ -46,21 +46,29 @@ export default function PromptEditor({ skillId, skillName, onClose, onChanged }:
   const [error, setError] = useState<string | null>(null);
   const supabase = createClient();
 
-  const load = useCallback(async () => {
-    const { data, error: loadError } = await supabase
-      .from("retrieval_prompts")
-      .select("id, text, source, last_served_at, times_served")
-      .eq("skill_id", skillId)
-      .is("archived_at", null)
-      .order("created_at", { ascending: true });
-    if (loadError) setError(loadError.message);
-    setPrompts(data ?? []);
-    setLoading(false);
-  }, [supabase, skillId]);
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    (async () => {
+      const { data, error: loadError } = await supabase
+        .from("retrieval_prompts")
+        .select("id, text, source, last_served_at, times_served")
+        .eq("skill_id", skillId)
+        .is("archived_at", null)
+        .order("created_at", { ascending: true });
+      // The editor can be closed mid-fetch; writing state into an unmounted
+      // component is the classic way this leaks.
+      if (cancelled) return;
+      if (loadError) setError(loadError.message);
+      setPrompts(data ?? []);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, skillId, reloadKey]);
 
   async function add() {
     const text = draft.trim();
@@ -78,7 +86,7 @@ export default function PromptEditor({ skillId, skillName, onClose, onChanged }:
     });
     if (writeError) return setError(writeError.message);
     setDraft("");
-    await load();
+    load();
     onChanged?.();
   }
 
@@ -93,7 +101,7 @@ export default function PromptEditor({ skillId, skillName, onClose, onChanged }:
       .eq("id", id);
     if (writeError) return setError(writeError.message);
     setEditingId(null);
-    await load();
+    load();
     onChanged?.();
   }
 
@@ -111,7 +119,7 @@ export default function PromptEditor({ skillId, skillName, onClose, onChanged }:
       .update({ archived_at: new Date().toISOString() })
       .eq("id", p.id);
     if (writeError) return setError(writeError.message);
-    await load();
+    load();
     onChanged?.();
   }
 
