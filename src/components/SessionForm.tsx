@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { applySm2 } from "@/lib/sm2";
+import { applyReview, type MemoryState } from "@/lib/v1/memory";
+import { gradeFromLegacyQuality } from "@/lib/v1/grade";
 import Plant from "./Plant";
 import GrowingTimerLeaf from "./GrowingTimerLeaf";
 
@@ -192,14 +193,25 @@ export default function SessionForm({
       return;
     }
 
-    const before = {
-      repetitions: currentState.repetitions,
-      easeFactor: Number(currentState.ease_factor),
-      intervalDays: currentState.interval_days,
-    };
-    const after = applySm2(before, quality);
+    // Interim wiring: the 0–5 slider is still on screen (the forced 4-point cue-
+    // anchored flow replaces it wholesale in the emergent-sessions branch), but the
+    // memory model behind it is already v1, so no review is graded by SM-2 rules
+    // and then re-interpreted later under different ones.
     const now = new Date();
-    const dueAt = new Date(now.getTime() + after.intervalDays * 86400000);
+    const lastReviewedAt = currentState.last_reviewed_at
+      ? new Date(currentState.last_reviewed_at)
+      : null;
+    const elapsedDays = lastReviewedAt
+      ? (now.getTime() - lastReviewedAt.getTime()) / 86400000
+      : 0;
+
+    const before: MemoryState = {
+      stability: currentState.interval_days > 0 ? currentState.interval_days : null,
+      difficulty: 5,
+    };
+    const { next } = applyReview(before, elapsedDays, gradeFromLegacyQuality(quality));
+    const stabilityDays = Math.max(1, Math.round(next.stability!));
+    const dueAt = new Date(now.getTime() + stabilityDays * 86400000);
 
     // The SM-2 before/after columns are gone: they had no counterpart in the v1
     // memory model and nothing downstream consumed them. What replaces them is
@@ -220,12 +232,9 @@ export default function SessionForm({
     const { error: updateError } = await supabase
       .from("sr_state")
       .update({
-        repetitions: after.repetitions,
-        ease_factor: after.easeFactor,
-        interval_days: after.intervalDays,
+        interval_days: stabilityDays,
         last_reviewed_at: now.toISOString(),
         due_at: dueAt.toISOString(),
-        updated_at: now.toISOString(),
       })
       .eq("skill_id", skillId);
     if (updateError) {
@@ -234,7 +243,7 @@ export default function SessionForm({
       return;
     }
 
-    setNextInterval(after.intervalDays);
+    setNextInterval(stabilityDays);
     setLoading(false);
     if (gardenComplete) {
       setPhase("done");
