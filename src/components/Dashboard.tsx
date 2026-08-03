@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import { rankSkills, formatReasonText, R_THRESHOLD } from "@/lib/scheduler";
+import { rankSkills, formatReasonText, daysUntilDue } from "@/lib/scheduler";
 import type { SchedulerRecommendation } from "@/lib/scheduler";
 import { healthFromRec, retrPct } from "@/lib/health";
 import SkillForm from "./SkillForm";
@@ -53,6 +53,27 @@ interface DashboardProps {
 }
 
 const HEALTH_GLYPH = { strong: "●", fading: "◑", overdue: "△", flowering: "✿" } as const;
+
+/**
+ * "Come back Tuesday" copy for the next skill that will need attention.
+ *
+ * Shared rather than inlined: this and the sidebar's "due in N days" were computing
+ * the same quantity two different ways, and disagreeing on screen simultaneously.
+ * Both now route through daysUntilDue.
+ */
+function formatComebackLabel(rec: SchedulerRecommendation | null): string | null {
+  if (!rec) return null;
+  const date = new Date();
+  date.setDate(date.getDate() + Math.max(1, Math.ceil(daysUntilDue(rec))));
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (date.toDateString() === tomorrow.toDateString()) return "tomorrow";
+  return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+}
 
 export default function Dashboard({
   user,
@@ -137,33 +158,12 @@ export default function Dashboard({
     recommendations.every((r) => !r.isNew && r.priorityScore === 0);
 
   const nextDueRec = isDoneForToday
-    ? recommendations.reduce((soonest, rec) => {
-        const dSoonest =
-          Math.max(soonest.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
-          (soonest.daysSinceReview ?? 0);
-        const dRec =
-          Math.max(rec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
-          (rec.daysSinceReview ?? 0);
-        return dRec < dSoonest ? rec : soonest;
-      })
+    ? recommendations.reduce((soonest, rec) =>
+        daysUntilDue(rec) < daysUntilDue(soonest) ? rec : soonest
+      )
     : null;
 
-  const comebackLabel = (() => {
-    if (!nextDueRec) return null;
-    const daysUntil =
-      Math.max(nextDueRec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
-      (nextDueRec.daysSinceReview ?? 0);
-    const date = new Date();
-    date.setDate(date.getDate() + Math.max(1, Math.ceil(daysUntil)));
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    if (date.toDateString() === tomorrow.toDateString()) return "tomorrow";
-    return date.toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-    });
-  })();
+  const comebackLabel = formatComebackLabel(nextDueRec);
 
   // Garden-health stats
   const reviewed = recommendations.filter((r) => !r.isNew);
@@ -703,7 +703,7 @@ export default function Dashboard({
                             ? "New — start anytime"
                             : rec.priorityScore > 0
                               ? "Due now · slipping"
-                              : `Rest — due in ${Math.max(0, Math.round(rec.intervalDays - (rec.daysSinceReview ?? 0)))} days`}
+                              : `Rest — due in ${Math.max(0, Math.round(daysUntilDue(rec)))} days`}
                         </div>
                       </div>
                       <span className="font-mono text-xs text-ink-soft">
@@ -869,32 +869,11 @@ export default function Dashboard({
           );
           const gardenNextDueRec =
             isLastDueSkill && restingOthers.length > 0
-              ? restingOthers.reduce((soonest, rec) => {
-                  const dS =
-                    Math.max(soonest.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
-                    (soonest.daysSinceReview ?? 0);
-                  const dR =
-                    Math.max(rec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
-                    (rec.daysSinceReview ?? 0);
-                  return dR < dS ? rec : soonest;
-                })
+              ? restingOthers.reduce((soonest, rec) =>
+                  daysUntilDue(rec) < daysUntilDue(soonest) ? rec : soonest
+                )
               : null;
-          const gardenComebackLabel = (() => {
-            if (!gardenNextDueRec) return null;
-            const daysUntil =
-              Math.max(gardenNextDueRec.intervalDays, 1) * Math.log(1 / R_THRESHOLD) -
-              (gardenNextDueRec.daysSinceReview ?? 0);
-            const date = new Date();
-            date.setDate(date.getDate() + Math.max(1, Math.ceil(daysUntil)));
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            if (date.toDateString() === tomorrow.toDateString()) return "tomorrow";
-            return date.toLocaleDateString("en-US", {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            });
-          })();
+          const gardenComebackLabel = formatComebackLabel(gardenNextDueRec);
 
           const skill = skills.find((s) => s.id === loggingSkillId);
           return (
