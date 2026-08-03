@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
-import { extractSkillGraph } from "@/lib/v1/import/extract";
+import { extractSkillGraph, CHUNK_CHARS } from "@/lib/v1/import/extract";
 
 /**
  * §8 import pass.
@@ -12,9 +12,23 @@ import { extractSkillGraph } from "@/lib/v1/import/extract";
  * edge applied without review can lock a skill the learner could have practised.
  */
 
-export const maxDuration = 300;
+/**
+ * 60s is the Vercel Hobby function ceiling, and the deploy target is Hobby (see the
+ * daily-cron note in the git history). An earlier value of 300 was silently clamped
+ * there, so an import that ran long failed in production with no useful error while
+ * appearing fine locally.
+ *
+ * The client chunks material so each request stays well inside this — measured at
+ * ~33s for a full CHUNK_CHARS chunk at `low` effort.
+ */
+export const maxDuration = 60;
 
-const MAX_MATERIAL_CHARS = 200_000;
+/**
+ * One chunk's worth, with slack for the client's paragraph packing. Enforced rather
+ * than trusted: a caller posting the whole syllabus in one request is exactly the
+ * case that times out.
+ */
+const MAX_MATERIAL_CHARS = CHUNK_CHARS * 2;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -50,8 +64,9 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "That material is too long for one pass. Import it a topic at a time — " +
-          "smaller passes also produce sharper retrieval cues.",
+          `That section is ${material.length} characters, past the ${MAX_MATERIAL_CHARS} ` +
+          `this endpoint can finish inside the function timeout. Split it on blank ` +
+          `lines and post each part separately.`,
       },
       { status: 413 }
     );
