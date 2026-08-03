@@ -109,7 +109,7 @@ functions as a retrieval event (testing effect) and feeds SM-2. Its
 subjectivity is a known limitation, mitigated by the append-only log (§5) which
 preserves the raw ratings for later recalibration.
 
-**Why skills must be narrowly scoped.** A single 0–5 recall rating is only a
+**Why skills must be narrowly scoped.** A single recall rating is only a
 coherent signal if it describes one well-defined thing. "Guitar" cannot be rated
 as a single number; "blues scale in A" can. The skill- and session-entry forms
 therefore include explicit scoping guidance (✗ Guitar → ✓ Blues scale in A;
@@ -118,6 +118,62 @@ toward atomic skills. This is not a UX nicety — it is a measurement requiremen
 The scheduler needs *one forgetting curve per skill*; a broad "skill" would
 blend several curves into one meaningless number. Broad goals are instead
 represented as **Topics** (§4.1), which group many atomic skills.
+
+### 3.1 The atomic unit: prompted retrieval attempts
+
+Narrow scoping is necessary but not sufficient, and this is the gap the v1
+architecture had to close before anything else could be trusted.
+
+A spaced-repetition scheduler is a controller. Its plant is the measurement
+procedure that produces grades. Anki's plant is well-defined: the unit is a card,
+the cue is fixed, so a grade is unambiguous and every downstream model — decay
+fitting, calibration, difficulty estimation — inherits that precision for free.
+Interleave's unit was "a skill," and a skill is not a cue. *"How's your Spanish?"*
+is not a gradeable question. Asking it anyway does not produce a noisy measurement;
+it produces an undefined one, and no amount of downstream modelling recovers from
+that. Since the append-only log (§5) is explicitly the training corpus for later
+individualized models, an undefined measurement procedure now is corrupted training
+data later.
+
+So v1 defines the unit:
+
+> **event = (skill, cue, attempt, grade, duration)**
+
+Each skill carries a small pool of **retrieval cues** — 3–5 short prompts, seeded at
+import from the learner's own material and freely editable. *"Play the F major scale
+from memory, both hands." "Explain what a closure captures and when it bites you."*
+A practice block is a sequence of attempts against specific cues. The learner
+performs the retrieval in the real world and rates it afterwards. **Interleave never
+verifies the performance.** It verifies that a retrieval was attempted against a
+named cue — which is precisely the property that makes a forced grade scale mean
+something.
+
+Three consequences follow, and they are why this is foundational rather than a
+refinement:
+
+- **The grade becomes interpretable.** *"Did you recall this specific conjugation
+  pattern?"* is answerable in a way that *"how's your Spanish?"* is not.
+- **Skill-level decay stops being an extrapolation.** The system is no longer
+  applying item-level memory models to a fuzzy construct; it is **pooling items
+  under a skill node**. That is a claim that can be instrumented: per-cue
+  calibration curves roll up to per-skill, and *divergence within a pool* — one cue
+  reliably failing while its siblings succeed — is a direct signal that the skill is
+  scoped too broadly. The scoping requirement above becomes measurable rather than
+  merely advised.
+- **Within-session dynamics become observable at all.** One fuzzy grade per block is
+  a single number; a sequence of timed attempts is a time series. Any model of
+  within-session fatigue needs the latter, and can say nothing from the former.
+
+**The limitation, stated plainly.** This does *not* solve the self-assessment
+problem. The learner still judges their own performance, so the overconfidence
+finding that motivates the forced scale (Kornell & Bjork, 2008) still applies —
+Interleave has no way to auto-grade a guitar exercise, and pretending otherwise
+would be worse than admitting it. What the cue layer buys is narrower and honest:
+the judgment is about one specific retrieval rather than a whole domain, the scale
+is forced rather than free, and the cue identity is logged so that per-cue grade
+distributions can be inspected for drift and over-rating after the fact. That is
+mitigation, not a solution, and the calibration work in §6 is where it gets tested
+rather than assumed.
 
 ## 4. The Interleaving Scheduler
 
@@ -253,8 +309,20 @@ claims grounded in its own data. The honest open questions:
   small: the scheduler's selection rule gains a mode that biases toward or away
   from the last-practiced skill's topic; the `topic_id` data already exists.
   This is the most direct empirical pipeline the product opens up.
-- **Is self-reported 0–5 recall well-calibrated?** The append-only log enables
-  retrospective calibration against later performance.
+- **Is self-reported recall well-calibrated?** The append-only log enables
+  retrospective calibration against later performance. With the cue layer (§3.1)
+  this sharpens into two separable questions: is *predicted retrievability*
+  well-calibrated against realized recall, and are *learners* well-calibrated
+  against their own performance? The first is answerable from the log alone. The
+  second is not fully answerable without an external criterion, and the honest
+  interim measure is per-cue grade-distribution drift — a cue whose grades ratchet
+  upward while its retrieval interval shortens is showing over-rating.
+- **Is a "skill" one forgetting curve or several?** (§3.1) Per-cue calibration
+  curves within a single skill's pool test this directly. If cues under one skill
+  show systematically different curves, the skill is scoped too broadly and the
+  single stability estimate the scheduler holds for it is an average over
+  heterogeneous items — which is the exact failure mode §3's scoping guidance warns
+  about, now detectable rather than merely warned about.
 - **Phase 2 — individualized BKT.** Once enough per-user session history
   accumulates, fit a personal forgetting model rather than relying on SM-2's
   fixed assumptions.
