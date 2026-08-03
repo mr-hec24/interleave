@@ -12,6 +12,7 @@ import TopicForm from "./TopicForm";
 import Plant from "./Plant";
 import ThemeToggle from "./ThemeToggle";
 import OnboardingModal from "./OnboardingModal";
+import PromptEditor from "./PromptEditor";
 
 interface Skill {
   id: string;
@@ -69,6 +70,7 @@ export default function Dashboard({
   const [showTopicForm, setShowTopicForm] = useState(false);
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [loggingSkillId, setLoggingSkillId] = useState<string | null>(null);
+  const [editingPromptsSkillId, setEditingPromptsSkillId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(
     initialSkills.length === 0 && initialTopics.length === 0
@@ -637,6 +639,12 @@ export default function Dashboard({
                           Practice
                         </button>
                         <button
+                          onClick={() => setEditingPromptsSkillId(rec.skillId)}
+                          className="text-ink-mute hover:text-ink"
+                        >
+                          Cues
+                        </button>
+                        <button
                           onClick={() => setEditingSkillId(rec.skillId)}
                           className="text-ink-mute hover:text-ink"
                         >
@@ -830,6 +838,18 @@ export default function Dashboard({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Retrieval-cue pool editor */}
+      {editingPromptsSkillId && (
+        <PromptEditor
+          skillId={editingPromptsSkillId}
+          skillName={
+            skills.find((s) => s.id === editingPromptsSkillId)?.name ?? ""
+          }
+          onClose={() => setEditingPromptsSkillId(null)}
+          onChanged={refreshData}
+        />
       )}
 
       {/* Session modal */}
