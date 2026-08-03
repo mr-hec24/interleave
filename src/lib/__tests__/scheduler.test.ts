@@ -12,8 +12,13 @@ describe("computeRetrievability", () => {
     expect(computeRetrievability(0, 10)).toBeCloseTo(1.0);
   });
 
-  it("returns ~0.37 when daysSince equals stability", () => {
-    expect(computeRetrievability(10, 10)).toBeCloseTo(Math.exp(-1), 2);
+  it("returns 0.9 when daysSince equals stability", () => {
+    // Updated with the units fix. This previously asserted ~0.37, i.e. that
+    // intervalDays was the raw exponential scale. Stability is defined
+    // operationally as the elapsed time at which R reaches 0.9 (spec §2), and the
+    // session flow writes that quantity, so reading it as the raw scale was what
+    // made the dashboard under-report recall.
+    expect(computeRetrievability(10, 10)).toBeCloseTo(0.9, 10);
   });
 
   it("returns 0 when stability is 0", () => {

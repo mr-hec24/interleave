@@ -1,3 +1,5 @@
+import { retrievability, daysUntilRetrievability } from "./v1/memory";
+
 export interface SkillSchedulerInput {
   skillId: string;
   skillName: string;
@@ -19,12 +21,36 @@ export interface SchedulerRecommendation {
 
 export const R_THRESHOLD = 0.85;
 
+/**
+ * Delegates to the v1 memory model rather than carrying its own copy of the decay
+ * curve.
+ *
+ * `intervalDays` now holds the operational stability S — days until R decays to 0.9
+ * — because that is what the session flow writes. The local `exp(-Δt/S)` this used
+ * to compute interpreted the same number as the raw exponential scale, which places
+ * R = 0.9 at 0.105·S instead of at S, and so under-reported retrievability by a wide
+ * margin for every skill on the dashboard.
+ */
 export function computeRetrievability(
   daysSinceReview: number,
   stabilityDays: number
 ): number {
-  if (stabilityDays <= 0) return 0;
-  return Math.exp(-daysSinceReview / stabilityDays);
+  return retrievability(daysSinceReview, stabilityDays > 0 ? stabilityDays : null);
+}
+
+/**
+ * Days from now until a skill decays to the review threshold. Negative when it is
+ * already overdue.
+ *
+ * Exists because this arithmetic was previously inlined at six call sites in the
+ * dashboard using two different formulas, which produced two different answers on
+ * screen at the same time. One definition, one answer.
+ */
+export function daysUntilDue(rec: SchedulerRecommendation): number {
+  if (rec.isNew) return 0;
+  const stability = Math.max(rec.intervalDays, 1);
+  const daysToThreshold = daysUntilRetrievability(R_THRESHOLD, stability) ?? 0;
+  return daysToThreshold - (rec.daysSinceReview ?? 0);
 }
 
 export function rankSkills(
