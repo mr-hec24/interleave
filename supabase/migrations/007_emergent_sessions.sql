@@ -8,6 +8,14 @@
 -- wire it back in, and it would silently reintroduce a clock into a decision the
 -- spec puts entirely in the controller's hands.
 
+-- Dropped first: an earlier draft of 005 created this view with `select s.*`, which
+-- freezes the column list at creation time and takes a dependency on every column
+-- of `skills` — including this one, blocking the drop below with
+-- "cannot drop column ... because other objects depend on it". 005 no longer creates
+-- it, so this is a no-op on a fresh install and the repair on a database that
+-- already ran the earlier version.
+drop view if exists schedulable_skills;
+
 alter table skills drop column default_session_minutes;
 
 -- Note on the compatibility shims from 004 and 006: the v1 session flow no longer

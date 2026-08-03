@@ -93,17 +93,15 @@ where s.archived_at is null;
 -- A skill with no live prompt has no gradeable retrieval. Scheduling it would
 -- produce exactly the undefined-measurement grade this whole layer exists to
 -- prevent, so it is excluded from the candidate set and surfaced as "needs setup"
--- instead. This view is the single source of truth for that rule; §6's reachability
--- mask and §7's argmax both filter through it.
-
-create view schedulable_skills
-with (security_invoker = true)
-as select s.*, p.prompt_count
-from skills s
-join (
-  select skill_id, count(*) as prompt_count
-  from retrieval_prompts
-  where archived_at is null
-  group by skill_id
-) p on p.skill_id = s.id
-where s.archived_at is null;
+-- instead.
+--
+-- That rule lives in the controller (src/lib/v1/controller.ts filters on
+-- promptPoolSize, and src/lib/v1/prompts.ts states it as isSchedulable), NOT in
+-- the schema. An earlier draft added a `schedulable_skills` view here as
+-- documentation, which was a mistake twice over: nothing read it, so it enforced
+-- nothing, and it was written `select s.*` — which freezes the column list at
+-- creation time and takes a hard dependency on every column of `skills`. That
+-- dependency then blocked a legitimate `drop column` in 007.
+--
+-- If you want a schema-level view of this, enumerate columns explicitly; never
+-- `select *` in a view you intend to keep.
