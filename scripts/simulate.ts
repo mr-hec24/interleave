@@ -6,12 +6,22 @@
  *   npx tsx scripts/simulate.ts --csv        # also write CSV to scripts/results.csv
  *   npx tsx scripts/simulate.ts --seed       # seed Supabase DB with realistic history
  *
- * The simulator imports the REAL applySm2 + rankSkills — no reimplementation.
+ * The simulator imports the REAL memory model + scheduler — no reimplementation.
  */
 
-import { applySm2, SM2_DEFAULTS, type Sm2State } from "../src/lib/sm2";
+import { applyReview, type MemoryState } from "../src/lib/v1/memory";
+import type { Grade } from "../src/lib/v1/grade";
 import { rankSkills, type SkillSchedulerInput } from "../src/lib/scheduler";
 import * as fs from "fs";
+
+/** Cold-start state for a skill the simulated learner has never practised. */
+const MEMORY_DEFAULTS: MemoryState = { stability: null, difficulty: 5 };
+
+/**
+ * Grades back onto the retired 0–5 scale, purely so the seeder can write through
+ * the legacy `sessions` compatibility view. Goes away with the view.
+ */
+const LEGACY_QUALITY: Record<Grade, number> = { again: 1, hard: 3, good: 4, easy: 5 };
 
 // ─── Synthetic Learner (ground-truth memory model the app never sees) ───
 
@@ -42,34 +52,42 @@ function trueRetrievability(daysSince: number, stability: number): number {
   return Math.exp(-daysSince / stability);
 }
 
-function generateQuality(rTrue: number, noise: number = 0.15): number {
-  // Map true retrievability to a 0-5 quality with some noise
-  const raw = rTrue * 5 + (Math.random() - 0.5) * 2 * noise * 5;
-  return Math.max(0, Math.min(5, Math.round(raw)));
+/**
+ * Map true retrievability onto the forced 4-point scale, with noise standing in for
+ * the learner's imperfect self-assessment. The band edges are deliberately not
+ * evenly spaced: `again` covers everything below a coin flip, because a retrieval
+ * the learner half-managed is a failure, not a middling success.
+ */
+function generateGrade(rTrue: number, noise: number = 0.15): Grade {
+  const observed = rTrue + (Math.random() - 0.5) * 2 * noise;
+  if (observed < 0.5) return "again";
+  if (observed < 0.7) return "hard";
+  if (observed < 0.9) return "good";
+  return "easy";
 }
 
 // ─── Scheduling Policies ───
 
 type Policy = (
-  sm2States: Map<string, Sm2State>,
+  memStates: Map<string, MemoryState>,
   latentStates: Map<string, LatentSkillState>,
   day: number,
   configs: SkillConfig[]
 ) => string[];
 
 function retrievabilityPolicy(
-  sm2States: Map<string, Sm2State>,
+  memStates: Map<string, MemoryState>,
   _latent: Map<string, LatentSkillState>,
   day: number,
   configs: SkillConfig[]
 ): string[] {
   const inputs: SkillSchedulerInput[] = configs.map((c) => {
-    const sm2 = sm2States.get(c.name)!;
+    const mem = memStates.get(c.name)!;
     const latent = _latent.get(c.name)!;
     return {
       skillId: c.name,
       skillName: c.name,
-      intervalDays: sm2.intervalDays,
+      intervalDays: Math.round(mem.stability ?? 0),
       lastReviewedAt:
         latent.lastPracticed < 0
           ? null
@@ -91,7 +109,7 @@ function retrievabilityPolicy(
 }
 
 function blockedPolicy(
-  _sm2: Map<string, Sm2State>,
+  _mem: Map<string, MemoryState>,
   _latent: Map<string, LatentSkillState>,
   day: number,
   configs: SkillConfig[]
@@ -103,7 +121,7 @@ function blockedPolicy(
 }
 
 function randomPolicy(
-  _sm2: Map<string, Sm2State>,
+  _mem: Map<string, MemoryState>,
   _latent: Map<string, LatentSkillState>,
   _day: number,
   configs: SkillConfig[]
@@ -116,7 +134,7 @@ function randomPolicy(
 }
 
 function roundRobinPolicy(
-  _sm2: Map<string, Sm2State>,
+  _mem: Map<string, MemoryState>,
   _latent: Map<string, LatentSkillState>,
   day: number,
   configs: SkillConfig[]
@@ -152,10 +170,10 @@ interface SimResult {
 interface SessionRecord {
   day: number;
   skillName: string;
-  quality: number;
+  grade: Grade;
   rTrue: number;
-  sm2Before: Sm2State;
-  sm2After: Sm2State;
+  memBefore: MemoryState;
+  memAfter: MemoryState;
 }
 
 function runSimulation(
@@ -172,11 +190,11 @@ function runSimulation(
     return rng / 0x7fffffff;
   };
 
-  const sm2States = new Map<string, Sm2State>();
+  const memStates = new Map<string, MemoryState>();
   const latentStates = new Map<string, LatentSkillState>();
 
   for (const c of configs) {
-    sm2States.set(c.name, { ...SM2_DEFAULTS });
+    memStates.set(c.name, { ...MEMORY_DEFAULTS });
     latentStates.set(c.name, {
       trueStability: c.initialStability,
       lastPracticed: -1,
@@ -190,11 +208,11 @@ function runSimulation(
   const allSessions: SessionRecord[] = [];
 
   for (let day = 0; day < SIM_DAYS; day++) {
-    const picks = policy(sm2States, latentStates, day, configs);
+    const picks = policy(memStates, latentStates, day, configs);
 
     for (const skillName of picks) {
       const latent = latentStates.get(skillName)!;
-      const sm2 = sm2States.get(skillName)!;
+      const mem = memStates.get(skillName)!;
 
       const daysSince =
         latent.lastPracticed < 0 ? 999 : day - latent.lastPracticed;
@@ -203,13 +221,13 @@ function runSimulation(
       if (rTrue > 0.95) wastedReviews++;
       if (rTrue < 0.3) lapses++;
 
-      const quality = generateQuality(rTrue);
-      const sm2Before = { ...sm2 };
-      const sm2After = applySm2(sm2, quality);
-      sm2States.set(skillName, sm2After);
+      const grade = generateGrade(rTrue);
+      const memBefore = { ...mem };
+      const { next: memAfter } = applyReview(mem, daysSince, grade);
+      memStates.set(skillName, memAfter);
 
       // Update latent state: practicing grows true stability
-      if (quality >= 3) {
+      if (grade !== "again") {
         const config = configs.find((c) => c.name === skillName)!;
         latent.trueStability *= config.learningGain;
         // Cap stability growth
@@ -221,10 +239,10 @@ function runSimulation(
       allSessions.push({
         day,
         skillName,
-        quality,
+        grade,
         rTrue,
-        sm2Before,
-        sm2After,
+        memBefore,
+        memAfter,
       });
     }
 
@@ -404,24 +422,13 @@ async function seedDatabase(sessions: SessionRecord[]) {
     const sessionDate = new Date(
       baseDate.getTime() + s.day * 86400000 + Math.random() * 43200000
     );
-    const dueAt = new Date(
-      sessionDate.getTime() + s.sm2After.intervalDays * 86400000
-    );
-
     const { error } = await supabase.from("sessions").insert({
       user_id: user.id,
       skill_id: skillIds.get(s.skillName)!,
       started_at: sessionDate.toISOString(),
       duration_minutes: 25,
-      quality: s.quality,
+      quality: LEGACY_QUALITY[s.grade],
       note: `Day ${s.day}: R_true=${(s.rTrue * 100).toFixed(0)}%`,
-      sm2_repetitions_before: s.sm2Before.repetitions,
-      sm2_ease_before: s.sm2Before.easeFactor,
-      sm2_interval_before: s.sm2Before.intervalDays,
-      sm2_repetitions_after: s.sm2After.repetitions,
-      sm2_ease_after: s.sm2After.easeFactor,
-      sm2_interval_after: s.sm2After.intervalDays,
-      due_at_after: dueAt.toISOString(),
     });
 
     if (error) {
@@ -440,19 +447,15 @@ async function seedDatabase(sessions: SessionRecord[]) {
     const lastDate = new Date(
       baseDate.getTime() + last.day * 86400000 + 21600000
     );
-    const dueAt = new Date(
-      lastDate.getTime() + last.sm2After.intervalDays * 86400000
-    );
+    const stabilityDays = Math.max(1, Math.round(last.memAfter.stability ?? 1));
+    const dueAt = new Date(lastDate.getTime() + stabilityDays * 86400000);
 
     await supabase
       .from("sr_state")
       .update({
-        repetitions: last.sm2After.repetitions,
-        ease_factor: last.sm2After.easeFactor,
-        interval_days: last.sm2After.intervalDays,
+        interval_days: stabilityDays,
         last_reviewed_at: lastDate.toISOString(),
         due_at: dueAt.toISOString(),
-        updated_at: new Date().toISOString(),
       })
       .eq("skill_id", skillIds.get(config.name)!);
   }
