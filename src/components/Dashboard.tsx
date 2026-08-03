@@ -13,6 +13,7 @@ import Plant from "./Plant";
 import ThemeToggle from "./ThemeToggle";
 import OnboardingModal from "./OnboardingModal";
 import PromptEditor from "./PromptEditor";
+import ImportPanel from "./ImportPanel";
 
 interface Skill {
   id: string;
@@ -92,6 +93,7 @@ export default function Dashboard({
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [loggingSkillId, setLoggingSkillId] = useState<string | null>(null);
   const [editingPromptsSkillId, setEditingPromptsSkillId] = useState<string | null>(null);
+  const [showImport, setShowImport] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(
     initialSkills.length === 0 && initialTopics.length === 0
@@ -482,6 +484,12 @@ export default function Dashboard({
                 </h2>
                 <div className="flex items-center gap-3 text-sm">
                   <button
+                    onClick={() => setShowImport(true)}
+                    className="text-ink-soft hover:text-ink font-medium"
+                  >
+                    Import
+                  </button>
+                  <button
                     onClick={() => setShowTopicForm(true)}
                     className="text-ink-soft hover:text-ink font-medium"
                   >
@@ -838,6 +846,18 @@ export default function Dashboard({
             </div>
           </div>
         </div>
+      )}
+
+      {/* §8 import pass */}
+      {showImport && (
+        <ImportPanel
+          topics={topicOptions}
+          onImported={() => {
+            setShowImport(false);
+            refreshData();
+          }}
+          onCancel={() => setShowImport(false)}
+        />
       )}
 
       {/* Retrieval-cue pool editor */}
