@@ -8,7 +8,6 @@ interface ExistingSkill {
   id: string;
   name: string;
   description: string | null;
-  default_session_minutes: number;
   topic_id?: string | null;
 }
 
