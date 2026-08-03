@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { rankSkills, R_THRESHOLD } from "@/lib/scheduler";
-import { healthFromRec, retrPct } from "@/lib/health";
+import { loadSessionContext } from "@/lib/v1/session/context";
+import { rankSkills } from "@/lib/v1/controller";
+import { healthFromRanked, retrPct } from "@/lib/health";
 import { buildReminderEmail, buildSubject, type DueSkill } from "@/emails/reminderEmail";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://interleaf.app";
@@ -52,33 +53,33 @@ export async function GET(request: Request) {
       continue;
     }
 
-    // Fetch this user's active skills with SR state
-    const { data: skills } = await db
-      .from("skills")
-      .select("id, name, default_session_minutes, sr_state(interval_days, last_reviewed_at)")
-      .eq("user_id", profile.id)
-      .is("archived_at", null);
-
-    if (!skills || skills.length === 0) {
+    // Ranked through the same controller a live session uses. There is no session
+    // in flight here, so saturation is read from its persisted value and decayed
+    // forward to now — the reminder ranks against fatigue at its resting level
+    // rather than assuming the learner is either fresh or spent.
+    const now = new Date();
+    const ctx = await loadSessionContext(db, profile.id, now);
+    if (ctx.skills.length === 0) {
       results.push({ userId: profile.id, status: "no_skills" });
       continue;
     }
 
-    const recs = rankSkills(
-      skills.map((s) => {
-        const sr = Array.isArray(s.sr_state) ? s.sr_state[0] : s.sr_state;
-        return {
-          skillId: s.id,
-          skillName: s.name,
-          intervalDays: sr?.interval_days ?? 0,
-          lastReviewedAt: sr?.last_reviewed_at ? new Date(sr.last_reviewed_at) : null,
-          defaultSessionMinutes: s.default_session_minutes,
-        };
-      }),
-      new Date()
-    );
+    const { ranked } = rankSkills({
+      skills: ctx.skills,
+      now,
+      config: ctx.config,
+      saturation: ctx.saturation,
+      prereqEdges: ctx.prereqEdges,
+      similarityGraph: ctx.similarityGraph,
+      // Nobody is mid-session, so nothing sits in the interference window.
+      recentPractice: [],
+    });
 
-    const dueRecs = recs.filter((r) => r.isNew || r.retrievability < R_THRESHOLD);
+    // Only mail when something clears the margin that would justify interrupting
+    // the learner's day. Below it, the scheduler's own reckoning is that there is
+    // nothing worth doing — and a reminder that contradicts the app's advice is
+    // worse than no reminder.
+    const dueRecs = ranked.filter((r) => r.utility >= ctx.config.epsilon);
     if (dueRecs.length === 0) {
       results.push({ userId: profile.id, status: "nothing_due" });
       continue;
@@ -88,9 +89,9 @@ export async function GET(request: Request) {
     const topDue = dueRecs.slice(0, 5);
     const dueSkills: DueSkill[] = topDue.map((r) => ({
       name: r.skillName,
-      health: healthFromRec(r),
-      retrievabilityPct: r.isNew ? null : retrPct(r),
-      isNew: r.isNew,
+      health: healthFromRanked(r),
+      retrievabilityPct: retrPct(r),
+      isNew: r.retrievability === 0,
     }));
 
     const subject = buildSubject(dueSkills);

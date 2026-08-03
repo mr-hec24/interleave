@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { rankSkills, R_THRESHOLD } from "@/lib/scheduler";
-import { healthFromRec, retrPct } from "@/lib/health";
+import { loadSessionContext } from "@/lib/v1/session/context";
+import { rankSkills } from "@/lib/v1/controller";
+import { healthFromRanked, retrPct } from "@/lib/health";
 import { buildReminderEmail, buildSubject, type DueSkill } from "@/emails/reminderEmail";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://interleaf.app";
@@ -50,29 +51,21 @@ async function handleSendTest() {
     return NextResponse.json({ error: "Email reminders are disabled" }, { status: 400 });
   }
 
-  const { data: skills } = await db
-    .from("skills")
-    .select("id, name, default_session_minutes, sr_state(interval_days, last_reviewed_at)")
-    .eq("user_id", user.id)
-    .is("archived_at", null);
+  const now = new Date();
+  const ctx = await loadSessionContext(db, user.id, now);
+  const { ranked } = rankSkills({
+    skills: ctx.skills,
+    now,
+    config: ctx.config,
+    saturation: ctx.saturation,
+    prereqEdges: ctx.prereqEdges,
+    similarityGraph: ctx.similarityGraph,
+    recentPractice: [],
+  });
 
-  const recs = rankSkills(
-    (skills ?? []).map((s) => {
-      const sr = Array.isArray(s.sr_state) ? s.sr_state[0] : s.sr_state;
-      return {
-        skillId: s.id,
-        skillName: s.name,
-        intervalDays: sr?.interval_days ?? 0,
-        lastReviewedAt: sr?.last_reviewed_at ? new Date(sr.last_reviewed_at) : null,
-        defaultSessionMinutes: s.default_session_minutes,
-      };
-    }),
-    new Date()
-  );
-
-  // For the test email, include all skills (not just due ones) so you always get a preview
-  const dueRecs = recs.filter((r) => r.isNew || r.retrievability < R_THRESHOLD);
-  const previewRecs = dueRecs.length > 0 ? dueRecs.slice(0, 5) : recs.slice(0, 3);
+  // For the test email, fall back to whatever exists so a preview always renders.
+  const dueRecs = ranked.filter((r) => r.utility >= ctx.config.epsilon);
+  const previewRecs = dueRecs.length > 0 ? dueRecs.slice(0, 5) : ranked.slice(0, 3);
 
   if (previewRecs.length === 0) {
     return NextResponse.json({ error: "No skills to show — add some skills first" }, { status: 400 });
@@ -80,9 +73,9 @@ async function handleSendTest() {
 
   const dueSkills: DueSkill[] = previewRecs.map((r) => ({
     name: r.skillName,
-    health: healthFromRec(r),
-    retrievabilityPct: r.isNew ? null : retrPct(r),
-    isNew: r.isNew,
+    health: healthFromRanked(r),
+    retrievabilityPct: retrPct(r),
+    isNew: r.retrievability === 0,
   }));
 
   const subject = `[Test] ${buildSubject(dueSkills)}`;
