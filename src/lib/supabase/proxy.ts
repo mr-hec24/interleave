@@ -30,9 +30,11 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Everything requires a session by default, except the public landing page,
-  // the auth flow, and routes that authenticate themselves another way
-  // (cron secret, unsubscribe token).
-  const publicPathPrefixes = ["/login", "/auth", "/api/cron", "/unsubscribe"];
+  // the auth flow, routes that authenticate themselves another way (cron secret,
+  // unsubscribe token), and /explore — which is documentation of the scheduling
+  // model: it reads no user data and writes nothing, so gating it behind a login
+  // would only stop people reasoning about the algorithm before they sign up.
+  const publicPathPrefixes = ["/login", "/auth", "/api/cron", "/unsubscribe", "/explore"];
   const isPublicPath =
     request.nextUrl.pathname === "/" ||
     publicPathPrefixes.some((path) =>
