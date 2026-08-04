@@ -8,6 +8,7 @@ import {
   serveNextPrompt,
   recordAttempt,
   evaluateSwitch,
+  isBlockComplete,
   finishBlock,
   moveTo,
   rank,
@@ -239,7 +240,25 @@ export default function PracticeSession({ initialSkillId = null, onExit }: Props
       })
       .eq("id", attempt.promptId);
 
-    // The only thing that ends a block.
+    // Mid-block: keep serving cues. The controller is deliberately NOT consulted
+    // here — the skill's state hasn't moved yet (blocks update, not attempts), so
+    // re-ranking now would compare against stale numbers and, with uniform channel
+    // loadings, would never fire at all.
+    if (!isBlockComplete(s)) {
+      if (!serveNextPrompt(s, d, new Date())) {
+        await endBlockAndWrap();
+        return;
+      }
+      syncView();
+      setPhase("cue");
+      return;
+    }
+
+    // The pool is covered, so the aggregate is now a fair summary of the skill.
+    // Commit it, then let the controller decide — this is the checkpoint at which
+    // urgency actually moves and ε becomes meaningful.
+    await commitBlock(now);
+
     const decision = evaluateSwitch(s, d, now);
     if (decision.shouldSwitch && decision.target) {
       setSwitchTarget(decision.target);
@@ -249,8 +268,9 @@ export default function PracticeSession({ initialSkillId = null, onExit }: Props
       return;
     }
 
-    // Same skill, next cue. An empty pool mid-block means the skill stopped being
-    // practisable, so treat it as a forced end rather than showing nothing.
+    // Nothing beat it by more than ε, so the same skill gets another pass. This is
+    // §7's "large ε yields long focused blocks", arrived at by the numbers rather
+    // than by a configured length.
     if (!serveNextPrompt(s, d, new Date())) {
       await endBlockAndWrap();
       return;

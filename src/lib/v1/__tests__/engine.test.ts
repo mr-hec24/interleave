@@ -4,6 +4,7 @@ import {
   serveNextPrompt,
   recordAttempt,
   evaluateSwitch,
+  isBlockComplete,
   finishBlock,
   moveTo,
   rank,
@@ -273,6 +274,114 @@ describe("finishBlock", () => {
     recordAttempt(state, deps, "easy", at(3));
     // The earlier `again` must not leak into this block's aggregate.
     expect(finishBlock(state, deps, at(3))!.aggregateGrade).toBe("easy");
+  });
+});
+
+describe("block termination — the endless-loop regression", () => {
+  /** What every hand-created and pre-v1 skill actually has. */
+  const UNIFORM = [0.25, 0.25, 0.25, 0.25];
+
+  it("terminates a block with identical channel loadings across skills", () => {
+    // The bug this pins: with uniform λ, F_i is the same for every skill, so −β·F
+    // cancels out of every pairwise comparison and fatigue can never break the tie.
+    // Meanwhile the incumbent's last_reviewed_at is frozen mid-block, so its R keeps
+    // decaying and its urgency RISES — staying looked better the longer you stayed.
+    // The utility comparison alone never fired and the learner cycled forever.
+    const { state, deps } = setup([
+      skill("a", { channelLoadings: UNIFORM }),
+      skill("b", { channelLoadings: UNIFORM }),
+    ]);
+    moveTo(state, "a", T0);
+
+    let completedAfter: number | null = null;
+    for (let i = 0; i < 20 && completedAfter === null; i++) {
+      serveNextPrompt(state, deps, at(i * 3));
+      recordAttempt(state, deps, "good", at(i * 3 + 2));
+      if (isBlockComplete(state)) completedAfter = i + 1;
+      // The pure utility comparison — what used to gate the switch — must be
+      // shown never to fire here, or this test would pass for the wrong reason.
+      expect(evaluateSwitch(state, deps, at(i * 3 + 2)).shouldSwitch).toBe(false);
+    }
+
+    expect(completedAfter).toBe(3); // one pass over a 3-cue pool
+  });
+
+  it("covers every cue exactly once before completing", () => {
+    const { state, deps } = setup([skill("a")]);
+    moveTo(state, "a", T0);
+    const served: string[] = [];
+    while (!isBlockComplete(state)) {
+      served.push(serveNextPrompt(state, deps, at(served.length))!.id);
+      recordAttempt(state, deps, "good", at(served.length));
+    }
+    expect(served).toHaveLength(3);
+    expect(new Set(served).size).toBe(3);
+  });
+
+  it("fires the switch once the block completes and the skill updates", () => {
+    // After the aggregate lands, R jumps to ~1 and urgency collapses — which is
+    // what finally lets a rival clear ε.
+    const { state, deps } = setup([
+      skill("a", { channelLoadings: UNIFORM }),
+      skill("b", { channelLoadings: UNIFORM }),
+    ]);
+    moveTo(state, "a", T0);
+    while (!isBlockComplete(state)) {
+      serveNextPrompt(state, deps, at(1));
+      recordAttempt(state, deps, "good", at(2));
+    }
+    finishBlock(state, deps, at(3));
+
+    const decision = evaluateSwitch(state, deps, at(3));
+    expect(decision.shouldSwitch).toBe(true);
+    expect(decision.target!.skillId).toBe("b");
+  });
+
+  it("keeps the learner on the same skill when epsilon is large", () => {
+    // §7's "large ε yields long focused blocks", now reachable: the block still
+    // completes, but the controller declines to move.
+    const { state, deps } = setup(
+      [skill("a", { channelLoadings: UNIFORM }), skill("b", { channelLoadings: UNIFORM })],
+      { config: { ...DEFAULT_CONFIG, epsilon: 5 } }
+    );
+    moveTo(state, "a", T0);
+    while (!isBlockComplete(state)) {
+      serveNextPrompt(state, deps, at(1));
+      recordAttempt(state, deps, "good", at(2));
+    }
+    finishBlock(state, deps, at(3));
+    expect(evaluateSwitch(state, deps, at(3)).shouldSwitch).toBe(false);
+  });
+
+  it("starts a fresh pass after the block settles", () => {
+    const { state, deps } = setup([skill("a")]);
+    moveTo(state, "a", T0);
+    while (!isBlockComplete(state)) {
+      serveNextPrompt(state, deps, at(1));
+      recordAttempt(state, deps, "good", at(2));
+    }
+    finishBlock(state, deps, at(3));
+    expect(isBlockComplete(state)).toBe(false);
+  });
+
+  it("resets coverage when re-entering a skill later in the session", () => {
+    const { state, deps } = setup([skill("a"), skill("b")]);
+    moveTo(state, "a", T0);
+    serveNextPrompt(state, deps, T0);
+    recordAttempt(state, deps, "good", at(1));
+    moveTo(state, "b", at(1));
+    moveTo(state, "a", at(2));
+    expect(state.servedThisBlock.size).toBe(0);
+    expect(isBlockComplete(state)).toBe(false);
+  });
+
+  it("treats a one-cue skill as a complete block after one attempt", () => {
+    const { state, deps } = setup([skill("a")]);
+    state.promptsBySkill.set("a", pool("a", 1));
+    moveTo(state, "a", T0);
+    serveNextPrompt(state, deps, T0);
+    recordAttempt(state, deps, "good", at(1));
+    expect(isBlockComplete(state)).toBe(true);
   });
 });
 
