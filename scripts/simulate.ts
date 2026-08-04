@@ -1,496 +1,566 @@
 /**
- * Interleave Simulator — synthetic learner + policy comparison + optional DB seed.
+ * Interleave Simulator — synthetic learner against the real v1 loop.
  *
- * Usage:
- *   npx tsx scripts/simulate.ts              # run analysis, print table
- *   npx tsx scripts/simulate.ts --csv        # also write CSV to scripts/results.csv
- *   npx tsx scripts/simulate.ts --seed       # seed Supabase DB with realistic history
+ *   npx tsx scripts/simulate.ts             # policy comparison
+ *   npx tsx scripts/simulate.ts --epsilon   # §11 block-granularity sweep
+ *   npx tsx scripts/simulate.ts --csv       # write scripts/results.csv
  *
- * The simulator imports the REAL applySm2 + rankSkills — no reimplementation.
+ * The simulator imports the REAL controller, memory model, fatigue model, and
+ * session engine — never a reimplementation. That is the property that makes it
+ * worth anything: a bug in the scheduler shows up here, and a result here is a
+ * statement about the shipped code rather than about a model of it.
+ *
+ * ## What it can and cannot tell you
+ *
+ * The synthetic learner has a ground-truth memory the app never sees, so the
+ * simulator can measure whether the scheduler's decisions actually preserve
+ * retention. What it cannot do is validate the model against people: the learner's
+ * decay is exponential because we made it so, and per-prompt difficulty varies
+ * because we made it vary. §11's experiments are the real test; this is the cheap
+ * pre-flight that catches a policy which is obviously broken before it reaches
+ * anyone.
  */
 
-import { applySm2, SM2_DEFAULTS, type Sm2State } from "../src/lib/sm2";
-import { rankSkills, type SkillSchedulerInput } from "../src/lib/scheduler";
+import {
+  rankSkills as rankV1,
+  decideSwitch,
+  type CandidateSkill,
+} from "../src/lib/v1/controller";
+import { DEFAULT_CONFIG, type SchedulerConfig } from "../src/lib/v1/config";
+import { applyReview, type MemoryState } from "../src/lib/v1/memory";
+import {
+  chargeAfterSession,
+  decayAfterIdle,
+  ZERO_SATURATION,
+} from "../src/lib/v1/fatigue";
+import { buildSimilarityGraph } from "../src/lib/v1/similarity";
+import type { Grade } from "../src/lib/v1/grade";
+import type { RecentPractice } from "../src/lib/v1/interference";
 import * as fs from "fs";
 
-// ─── Synthetic Learner (ground-truth memory model the app never sees) ───
+// ─── Deterministic RNG ───────────────────────────────────────────────────────
+//
+// Injected rather than patched over the global. The previous version replaced
+// `Math.random` for the duration of a run, which silently affected anything else
+// executing in the same process and made two policies share a stream.
 
-interface LatentSkillState {
-  trueStability: number; // S_true in days — how long until R_true decays to ~37%
-  lastPracticed: number; // day number of last practice
+function makeRng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
 }
 
+// ─── Synthetic learner (ground truth the app never sees) ─────────────────────
+
+/**
+ * ## The one assumption baked into the ground truth: the spacing effect
+ *
+ * The synthetic learner's true stability grows more from a successful retrieval made
+ * at *low* retrievability than at high — a retrieval you nearly failed teaches more
+ * than one that was never in doubt. Without that, waiting has no upside in this
+ * world: any policy that practises everything constantly accumulates more successful
+ * blocks and therefore more stability, and round-robin beats every spacing-aware
+ * schedule by construction.
+ *
+ * This is deliberate and it bounds what the simulator can claim. **It cannot be
+ * evidence that the spacing effect is real** — it assumes it. What it can show is
+ * whether the controller *exploits* a spacing effect efficiently once one exists,
+ * which is a question about the code rather than about memory. The empirical
+ * question stays where §11 puts it.
+ */
 interface SkillConfig {
   name: string;
-  initialStability: number; // how "easy" the skill is to start (lower = harder)
-  learningGain: number; // how much stability grows per successful practice
+  /** Days until true recall falls to ~37%. */
+  initialStability: number;
+  /** Peak multiplier on true stability, reached when a retrieval was hard-won. */
+  learningGain: number;
+  /** λ_i — which channels this skill tires. */
+  channelLoadings: number[];
+  /** Per-cue difficulty offsets, so pools are heterogeneous like real ones. */
+  cueDifficulty: number[];
 }
 
+const LOGICAL = [0.8, 0.15, 0.05, 0];
+const VERBAL = [0.15, 0.75, 0.1, 0];
+const MOTOR = [0.05, 0.05, 0.2, 0.7];
+const VISUAL = [0.15, 0.05, 0.75, 0.05];
+
 const SKILL_CONFIGS: SkillConfig[] = [
-  { name: "Spanish subjunctive", initialStability: 1.5, learningGain: 1.4 },
-  { name: "Piano ii-V-I comping", initialStability: 2.0, learningGain: 1.3 },
-  { name: "Backprop math", initialStability: 1.0, learningGain: 1.5 },
-  { name: "French reading", initialStability: 2.5, learningGain: 1.2 },
-  { name: "Drawing perspective", initialStability: 1.8, learningGain: 1.35 },
+  { name: "Spanish subjunctive", initialStability: 1.5, learningGain: 2.6, channelLoadings: VERBAL, cueDifficulty: [1.0, 0.85, 1.15] },
+  { name: "Piano ii-V-I comping", initialStability: 2.0, learningGain: 2.4, channelLoadings: MOTOR, cueDifficulty: [1.0, 1.1, 0.9] },
+  { name: "Backprop math", initialStability: 1.0, learningGain: 2.8, channelLoadings: LOGICAL, cueDifficulty: [1.0, 0.8, 1.2] },
+  { name: "French reading", initialStability: 2.5, learningGain: 2.2, channelLoadings: VERBAL, cueDifficulty: [1.0, 1.05, 0.95] },
+  { name: "Drawing perspective", initialStability: 1.8, learningGain: 2.5, channelLoadings: VISUAL, cueDifficulty: [1.0, 0.9, 1.1] },
 ];
 
 const SIM_DAYS = 90;
-const SESSIONS_PER_DAY = 2; // learner can practice 2 skills per day
+const BLOCKS_PER_DAY = 3;
+const ATTEMPTS_PER_BLOCK = 3;
+const MINUTES_PER_ATTEMPT = 4;
+/** Idle time between practice days, for fatigue recovery. */
+const OVERNIGHT_MINUTES = 20 * 60;
+
+interface LatentSkill {
+  trueStability: number;
+  lastPracticedDay: number;
+}
 
 function trueRetrievability(daysSince: number, stability: number): number {
   if (stability <= 0) return 0;
   return Math.exp(-daysSince / stability);
 }
 
-function generateQuality(rTrue: number, noise: number = 0.15): number {
-  // Map true retrievability to a 0-5 quality with some noise
-  const raw = rTrue * 5 + (Math.random() - 0.5) * 2 * noise * 5;
-  return Math.max(0, Math.min(5, Math.round(raw)));
+/**
+ * Grades a retrieval by treating retrievability as what it is: a probability.
+ *
+ * The earlier version thresholded R against a fixed cutoff, which quietly made the
+ * outcome deterministic and put the failure boundary somewhere the model never
+ * claimed it was. Sampling against R is the definition, and it has a consequence
+ * worth stating plainly: **§4's target of θ = 0.35 means roughly two thirds of
+ * scheduled reviews are expected to fail.** That is a deliberate choice in the spec
+ * — retrieval near the edge of forgetting is what the desirable-difficulty argument
+ * asks for — but it sits a long way from the ~0.9 desired retention that FSRS and
+ * Anki default to, and it interacts sharply with how hard a lapse is punished.
+ */
+function gradeFrom(rTrue: number, cueDifficulty: number, rand: () => number): Grade {
+  const p = Math.min(1, rTrue / cueDifficulty);
+  if (rand() >= p) return "again";
+  // It came back. How easily depends on how much headroom there was.
+  if (p < 0.5) return "hard";
+  if (p < 0.85) return "good";
+  return "easy";
 }
 
-// ─── Scheduling Policies ───
+const GRADE_ORDER: Grade[] = ["again", "hard", "good", "easy"];
+const worst = (a: Grade, b: Grade) =>
+  GRADE_ORDER.indexOf(a) < GRADE_ORDER.indexOf(b) ? a : b;
 
-type Policy = (
-  sm2States: Map<string, Sm2State>,
-  latentStates: Map<string, LatentSkillState>,
-  day: number,
-  configs: SkillConfig[]
-) => string[];
+// ─── Policies ────────────────────────────────────────────────────────────────
 
-function retrievabilityPolicy(
-  sm2States: Map<string, Sm2State>,
-  _latent: Map<string, LatentSkillState>,
-  day: number,
-  configs: SkillConfig[]
-): string[] {
-  const inputs: SkillSchedulerInput[] = configs.map((c) => {
-    const sm2 = sm2States.get(c.name)!;
-    const latent = _latent.get(c.name)!;
-    return {
-      skillId: c.name,
-      skillName: c.name,
-      intervalDays: sm2.intervalDays,
-      lastReviewedAt:
-        latent.lastPracticed < 0
-          ? null
-          : new Date((day - (day - latent.lastPracticed)) * 86400000),
-      defaultSessionMinutes: 25,
-    };
+type Policy = (ctx: {
+  skills: CandidateSkill[];
+  saturation: number[];
+  recentPractice: RecentPractice[];
+  current: string | null;
+  now: Date;
+  config: SchedulerConfig;
+  rand: () => number;
+}) => string | null;
+
+/** The real v1 controller, hysteresis and all. */
+const utilityPolicy: Policy = ({ skills, saturation, recentPractice, current, now, config }) => {
+  const ranking = rankV1({
+    skills,
+    now,
+    config,
+    saturation,
+    prereqEdges: [],
+    similarityGraph: buildSimilarityGraph([]),
+    recentPractice,
   });
-  // Adjust lastReviewedAt to reflect actual days-ago correctly
-  const nowDate = new Date(day * 86400000);
-  for (const input of inputs) {
-    const latent = _latent.get(input.skillId)!;
-    if (latent.lastPracticed >= 0) {
-      const msAgo = (day - latent.lastPracticed) * 86400000;
-      input.lastReviewedAt = new Date(nowDate.getTime() - msAgo);
-    }
-  }
-  const ranked = rankSkills(inputs, nowDate);
-  return ranked.slice(0, SESSIONS_PER_DAY).map((r) => r.skillId);
-}
-
-function blockedPolicy(
-  _sm2: Map<string, Sm2State>,
-  _latent: Map<string, LatentSkillState>,
-  day: number,
-  configs: SkillConfig[]
-): string[] {
-  // Practice one skill at a time until 10 consecutive days, then move to next
-  const blockSize = 10;
-  const idx = Math.floor(day / blockSize) % configs.length;
-  return Array(SESSIONS_PER_DAY).fill(configs[idx].name);
-}
-
-function randomPolicy(
-  _sm2: Map<string, Sm2State>,
-  _latent: Map<string, LatentSkillState>,
-  _day: number,
-  configs: SkillConfig[]
-): string[] {
-  const picks: string[] = [];
-  for (let i = 0; i < SESSIONS_PER_DAY; i++) {
-    picks.push(configs[Math.floor(Math.random() * configs.length)].name);
-  }
-  return picks;
-}
-
-function roundRobinPolicy(
-  _sm2: Map<string, Sm2State>,
-  _latent: Map<string, LatentSkillState>,
-  day: number,
-  configs: SkillConfig[]
-): string[] {
-  const picks: string[] = [];
-  for (let i = 0; i < SESSIONS_PER_DAY; i++) {
-    const idx = (day * SESSIONS_PER_DAY + i) % configs.length;
-    picks.push(configs[idx].name);
-  }
-  return picks;
-}
-
-const POLICIES: Record<string, Policy> = {
-  "Retrievability (interleave)": retrievabilityPolicy,
-  Blocked: blockedPolicy,
-  Random: randomPolicy,
-  "Round-robin": roundRobinPolicy,
+  if (ranking.ranked.length === 0) return null;
+  const decision = decideSwitch(ranking, current, config);
+  if (decision.shouldSwitch && decision.target) return decision.target.skillId;
+  return current ?? ranking.ranked[0].skillId;
 };
 
-// ─── Simulation Engine ───
+/** Urgency only — the §11 β = 0 ablation arm for the fatigue term. */
+const noFatiguePolicy: Policy = (ctx) =>
+  utilityPolicy({ ...ctx, config: { ...ctx.config, beta: 0 } });
+
+const blockedPolicy: Policy = ({ skills, now }) => {
+  const day = Math.floor(now.getTime() / 86400000);
+  return skills[Math.floor(day / 10) % skills.length].id;
+};
+
+const randomPolicy: Policy = ({ skills, rand }) =>
+  skills[Math.floor(rand() * skills.length)].id;
+
+const roundRobinPolicy: Policy = ({ skills, now }) => {
+  const day = Math.floor(now.getTime() / 86400000);
+  return skills[day % skills.length].id;
+};
+
+// ─── Engine ──────────────────────────────────────────────────────────────────
+
+/**
+ * Days of no practice before the durability measurement.
+ *
+ * The headline metric has to be retention *after a washout*, not on the last day of
+ * practice. End-of-run retrievability rewards recency: a policy that touches every
+ * skill constantly ends with everything fresh and scores highest, even while doing
+ * far more redundant work. Measured that way, round-robin beats the utility policy —
+ * which says nothing about learning and everything about the metric.
+ *
+ * A washout asks the question the product actually makes: two weeks after you stop,
+ * what is still there? That is a function of the stability the schedule built, which
+ * is what spacing is for.
+ */
+const WASHOUT_DAYS = 14;
 
 interface SimResult {
   policy: string;
-  meanRetention: number; // mean R_true across all skills at end
-  minRetention: number; // worst skill R_true at end
-  skillsAbove80: number; // how many skills have R_true > 0.80 at end
-  wastedReviews: number; // sessions where R_true > 0.95 (no desirable difficulty)
-  lapses: number; // sessions where R_true < 0.30 (too much forgetting)
-  totalSessions: number;
-  dailyRetention: number[]; // mean R_true per day (for plotting)
-}
-
-interface SessionRecord {
-  day: number;
-  skillName: string;
-  quality: number;
-  rTrue: number;
-  sm2Before: Sm2State;
-  sm2After: Sm2State;
+  meanRetention: number;
+  minRetention: number;
+  /** Mean true retrievability WASHOUT_DAYS after practice stops. The real one. */
+  durableRetention: number;
+  durableMin: number;
+  skillsAbove80: number;
+  wastedBlocks: number;
+  lapses: number;
+  blocks: number;
+  meanBlockAttempts: number;
+  switches: number;
+  /** The learner's true stability at the end — shows whether practice accumulated. */
+  meanTrueStability: number;
+  dailyRetention: number[];
 }
 
 function runSimulation(
   policyName: string,
   policy: Policy,
-  configs: SkillConfig[],
-  seed: number = 42
-): { result: SimResult; sessions: SessionRecord[] } {
-  // Seed-ish determinism (good enough for this)
-  let rng = seed;
-  const origRandom = Math.random;
-  Math.random = () => {
-    rng = (rng * 1664525 + 1013904223) & 0x7fffffff;
-    return rng / 0x7fffffff;
-  };
+  config: SchedulerConfig,
+  seed = 42
+): SimResult {
+  const rand = makeRng(seed);
+  const t0 = new Date("2026-01-01T08:00:00Z");
 
-  const sm2States = new Map<string, Sm2State>();
-  const latentStates = new Map<string, LatentSkillState>();
+  const skills: CandidateSkill[] = SKILL_CONFIGS.map((c, i) => ({
+    id: c.name,
+    name: c.name,
+    stability: null,
+    difficulty: 5,
+    channelLoadings: c.channelLoadings,
+    priorityWeight: 1,
+    lastReviewedAt: null,
+    promptPoolSize: c.cueDifficulty.length,
+    // Deterministic per-skill cue rotation.
+    ...({ _cursor: i } as object),
+  }));
+  const cursor = new Map<string, number>(skills.map((s) => [s.id, 0]));
+  const latent = new Map<string, LatentSkill>(
+    SKILL_CONFIGS.map((c) => [c.name, { trueStability: c.initialStability, lastPracticedDay: -1 }])
+  );
 
-  for (const c of configs) {
-    sm2States.set(c.name, { ...SM2_DEFAULTS });
-    latentStates.set(c.name, {
-      trueStability: c.initialStability,
-      lastPracticed: -1,
-    });
-  }
+  let saturation = [...ZERO_SATURATION];
+  let current: string | null = null;
+  let recentPractice: RecentPractice[] = [];
 
-  let wastedReviews = 0;
+  let wastedBlocks = 0;
   let lapses = 0;
-  let totalSessions = 0;
+  let blocks = 0;
+  let totalAttempts = 0;
+  let switches = 0;
   const dailyRetention: number[] = [];
-  const allSessions: SessionRecord[] = [];
 
   for (let day = 0; day < SIM_DAYS; day++) {
-    const picks = policy(sm2States, latentStates, day, configs);
+    for (let b = 0; b < BLOCKS_PER_DAY; b++) {
+      const now = new Date(t0.getTime() + day * 86400000 + b * 90 * 60000);
+      const chosen = policy({
+        skills,
+        saturation,
+        recentPractice,
+        current,
+        now,
+        config,
+        rand,
+      });
+      if (!chosen) continue;
+      if (current !== null && chosen !== current) switches++;
+      current = chosen;
 
-    for (const skillName of picks) {
-      const latent = latentStates.get(skillName)!;
-      const sm2 = sm2States.get(skillName)!;
+      const skill = skills.find((s) => s.id === chosen)!;
+      const cfg = SKILL_CONFIGS.find((c) => c.name === chosen)!;
+      const lat = latent.get(chosen)!;
 
-      const daysSince =
-        latent.lastPracticed < 0 ? 999 : day - latent.lastPracticed;
-      const rTrue = trueRetrievability(daysSince, latent.trueStability);
-
-      if (rTrue > 0.95) wastedReviews++;
+      const daysSince = lat.lastPracticedDay < 0 ? 999 : day - lat.lastPracticedDay;
+      const rTrue = trueRetrievability(daysSince, lat.trueStability);
+      if (rTrue > 0.95) wastedBlocks++;
       if (rTrue < 0.3) lapses++;
 
-      const quality = generateQuality(rTrue);
-      const sm2Before = { ...sm2 };
-      const sm2After = applySm2(sm2, quality);
-      sm2States.set(skillName, sm2After);
-
-      // Update latent state: practicing grows true stability
-      if (quality >= 3) {
-        const config = configs.find((c) => c.name === skillName)!;
-        latent.trueStability *= config.learningGain;
-        // Cap stability growth
-        latent.trueStability = Math.min(latent.trueStability, 120);
+      // A block is several attempts against different cues; the skill's state
+      // advances once, on the block's worst grade — matching the shipped engine.
+      let blockGrade: Grade = "easy";
+      for (let a = 0; a < ATTEMPTS_PER_BLOCK; a++) {
+        const idx = cursor.get(chosen)!;
+        cursor.set(chosen, (idx + 1) % cfg.cueDifficulty.length);
+        blockGrade = worst(blockGrade, gradeFrom(rTrue, cfg.cueDifficulty[idx], rand));
+        totalAttempts++;
+        saturation = chargeAfterSession(
+          saturation,
+          skill.channelLoadings,
+          MINUTES_PER_ATTEMPT,
+          config.fatigue
+        );
       }
-      latent.lastPracticed = day;
-      totalSessions++;
+      blocks++;
 
-      allSessions.push({
-        day,
-        skillName,
-        quality,
-        rTrue,
-        sm2Before,
-        sm2After,
-      });
+      const before: MemoryState = { stability: skill.stability, difficulty: skill.difficulty };
+      const elapsedDays = skill.lastReviewedAt
+        ? (now.getTime() - skill.lastReviewedAt.getTime()) / 86400000
+        : 0;
+      const { next } = applyReview(before, elapsedDays, blockGrade);
+      skill.stability = next.stability;
+      skill.difficulty = next.difficulty;
+      skill.lastReviewedAt = now;
+
+      if (blockGrade === "again") {
+        // Relearning. Without this the learner has an absorbing failure state: a
+        // skill that decays past the point where retrieval succeeds grades `again`
+        // forever, never gains, and can never come back — so every policy ends with
+        // at least one dead skill and the comparison degenerates. A real lapse
+        // costs stability but leaves the trace re-buildable.
+        lat.trueStability = Math.max(cfg.initialStability, lat.trueStability * 0.7);
+      } else {
+        // The spacing effect, in the ground truth. A success at R≈0.95 barely moves
+        // stability; one at R≈0.4 moves it a lot. See the note on SkillConfig for
+        // what this does and does not license the simulator to claim.
+        const gain = 1 + (cfg.learningGain - 1) * (1 - rTrue);
+        lat.trueStability = Math.min(lat.trueStability * gain, 120);
+      }
+      lat.lastPracticedDay = day;
+
+      recentPractice = [
+        { skillId: chosen, blocksAgo: 1 },
+        ...recentPractice
+          .filter((r) => r.skillId !== chosen)
+          .map((r) => ({ ...r, blocksAgo: r.blocksAgo + 1 })),
+      ];
     }
 
-    // Record mean true retention across all skills at end of day
-    let sumR = 0;
-    for (const c of configs) {
-      const latent = latentStates.get(c.name)!;
-      const daysSince =
-        latent.lastPracticed < 0 ? 999 : day - latent.lastPracticed;
-      sumR += trueRetrievability(daysSince, latent.trueStability);
+    saturation = decayAfterIdle(saturation, OVERNIGHT_MINUTES, config.fatigue);
+
+    let sum = 0;
+    for (const c of SKILL_CONFIGS) {
+      const l = latent.get(c.name)!;
+      const ds = l.lastPracticedDay < 0 ? 999 : day - l.lastPracticedDay;
+      sum += trueRetrievability(ds, l.trueStability);
     }
-    dailyRetention.push(sumR / configs.length);
+    dailyRetention.push(sum / SKILL_CONFIGS.length);
   }
 
-  // Final retention per skill
-  const finalRetentions: number[] = [];
-  for (const c of configs) {
-    const latent = latentStates.get(c.name)!;
-    const daysSince =
-      latent.lastPracticed < 0 ? 999 : SIM_DAYS - 1 - latent.lastPracticed;
-    finalRetentions.push(trueRetrievability(daysSince, latent.trueStability));
-  }
+  const retentionAt = (dayOffset: number) =>
+    SKILL_CONFIGS.map((c) => {
+      const l = latent.get(c.name)!;
+      const ds = l.lastPracticedDay < 0 ? 999 : SIM_DAYS - 1 + dayOffset - l.lastPracticedDay;
+      return trueRetrievability(ds, l.trueStability);
+    });
 
-  Math.random = origRandom;
+  const finals = retentionAt(0);
+  const durable = retentionAt(WASHOUT_DAYS);
 
   return {
-    result: {
-      policy: policyName,
-      meanRetention:
-        finalRetentions.reduce((a, b) => a + b, 0) / finalRetentions.length,
-      minRetention: Math.min(...finalRetentions),
-      skillsAbove80: finalRetentions.filter((r) => r > 0.8).length,
-      wastedReviews,
-      lapses,
-      totalSessions,
-      dailyRetention,
-    },
-    sessions: allSessions,
+    policy: policyName,
+    meanRetention: finals.reduce((a, b) => a + b, 0) / finals.length,
+    minRetention: Math.min(...finals),
+    durableRetention: durable.reduce((a, b) => a + b, 0) / durable.length,
+    durableMin: Math.min(...durable),
+    skillsAbove80: durable.filter((r) => r > 0.8).length,
+    wastedBlocks,
+    lapses,
+    blocks,
+    meanBlockAttempts: blocks === 0 ? 0 : totalAttempts / blocks,
+    switches,
+    meanTrueStability:
+      SKILL_CONFIGS.reduce((a, c) => a + latent.get(c.name)!.trueStability, 0) /
+      SKILL_CONFIGS.length,
+    dailyRetention,
   };
 }
 
-// ─── Output ───
+// ─── Output ──────────────────────────────────────────────────────────────────
 
 function printTable(results: SimResult[]) {
-  console.log("\n" + "═".repeat(90));
+  console.log("\n" + "═".repeat(96));
   console.log(
-    "  INTERLEAVE SIMULATOR — 90-day comparison, %d skills, %d sessions/day",
-    SKILL_CONFIGS.length,
-    SESSIONS_PER_DAY
+    `  INTERLEAVE SIMULATOR — ${SIM_DAYS} days, ${SKILL_CONFIGS.length} skills, ${BLOCKS_PER_DAY} blocks/day`
   );
-  console.log("═".repeat(90));
-
-  const header = [
-    "Policy".padEnd(28),
-    "Mean R".padStart(8),
-    "Min R".padStart(8),
-    ">80%".padStart(6),
-    "Wasted".padStart(8),
-    "Lapses".padStart(8),
-    "Total".padStart(7),
-  ].join(" │ ");
-
-  console.log(header);
-  console.log("─".repeat(90));
-
-  for (const r of results) {
-    const row = [
-      r.policy.padEnd(28),
-      (Math.round(r.meanRetention * 1000) / 10).toFixed(1).padStart(7) + "%",
-      (Math.round(r.minRetention * 1000) / 10).toFixed(1).padStart(7) + "%",
-      `${r.skillsAbove80}/${SKILL_CONFIGS.length}`.padStart(6),
-      String(r.wastedReviews).padStart(8),
-      String(r.lapses).padStart(8),
-      String(r.totalSessions).padStart(7),
-    ].join(" │ ");
-    console.log(row);
+  console.log("═".repeat(96));
+  console.log(
+    [
+      "Policy".padEnd(28),
+      "Durable".padStart(8),
+      "D-min".padStart(8),
+      ">80%".padStart(6),
+      "Day90".padStart(7),
+      "Wasted".padStart(7),
+      "Lapses".padStart(7),
+      "Mean S".padStart(7),
+    ].join(" │ ")
+  );
+  console.log("─".repeat(96));
+  for (const r of [...results].sort((a, b) => b.durableRetention - a.durableRetention)) {
+    console.log(
+      [
+        r.policy.padEnd(28),
+        `${(r.durableRetention * 100).toFixed(1)}%`.padStart(8),
+        `${(r.durableMin * 100).toFixed(1)}%`.padStart(8),
+        `${r.skillsAbove80}/${SKILL_CONFIGS.length}`.padStart(6),
+        `${(r.meanRetention * 100).toFixed(0)}%`.padStart(7),
+        String(r.wastedBlocks).padStart(7),
+        String(r.lapses).padStart(7),
+        `${r.meanTrueStability.toFixed(1)}d`.padStart(7),
+      ].join(" │ ")
+    );
   }
+  console.log("═".repeat(96));
+  console.log(
+    `\n  Durable — mean true retrievability ${WASHOUT_DAYS} days AFTER practice stops.`
+  );
+  console.log("            This is the headline: it measures the stability the schedule");
+  console.log("            built, not which skill happened to be touched most recently.");
+  console.log("  D-min   — the worst skill after washout, which is what blocking sacrifices");
+  console.log("  Day90   — retention on the last day of practice. Shown for contrast only:");
+  console.log("            it rewards recency, so a policy that touches everything");
+  console.log("            constantly scores well on it while doing redundant work.");
+  console.log("  Wasted  — blocks where true recall was already >95% (nothing to gain)");
+  console.log("  Lapses  — blocks where true recall had fallen below 30%");
+  console.log("  Switch  — how often the policy changed skill between blocks");
+  console.log("\n  All policies get the same number of blocks, so this compares schedules");
+  console.log("  at equal effort.\n");
+}
 
-  console.log("═".repeat(90));
-  console.log("\nMetric definitions:");
+/**
+ * θ sweep — where reviews start building more than they cost.
+ *
+ * This exists because the default run collapses, and the reason is worth seeing
+ * rather than tuning away. §4 targets θ ≈ 0.35: schedule each review when recall has
+ * fallen to about 35%. Retrievability is a probability, so that means roughly two
+ * thirds of scheduled reviews are expected to *fail*. §3 then has stability
+ * "collapse toward a re-learning value" on each of those failures.
+ *
+ * Those two settings fight each other. Per block, expected log-stability change is
+ *
+ *     θ·ln(gain on success) + (1−θ)·ln(cost of a lapse)
+ *
+ * and with a success gain around 1.26 at θ = 0.35, that is only non-negative if a
+ * lapse costs less than roughly 12% of stability. The v1 priors put it at 72%
+ * (`lapseRetention` 0.28). Under those numbers, practice loses ground on average no
+ * matter which policy picks the skills — which is exactly what the default table
+ * shows, and it is a property of the parameters rather than of the controller.
+ *
+ * The sweep shows where the boundary sits. Treat it as a question for the spec, not
+ * as a knob the simulator gets to turn.
+ */
+function printThetaSweep() {
+  console.log("\n" + "═".repeat(96));
+  console.log("  θ SWEEP — target retrievability vs. whether practice accumulates");
+  console.log("═".repeat(96));
   console.log(
-    "  Mean R   — average true retrievability across all skills on day 90"
+    "  θ is where §4 aims each review. Retrievability is a probability, so θ = 0.35\n" +
+      "  means ~65% of reviews are expected to fail — and each failure costs stability.\n"
   );
   console.log(
-    "  Min R    — worst-performing skill's true retrievability on day 90"
+    ["θ".padStart(6), "Durable".padStart(8), "D-min".padStart(8), "Lapses".padStart(7), "Mean S".padStart(8)].join(" │ ")
   );
-  console.log("  >80%     — skills with true retrievability above 80% on day 90");
+  console.log("─".repeat(48));
+
+  for (const theta of [0.35, 0.5, 0.65, 0.75, 0.85, 0.9]) {
+    const runs = [1, 2, 3, 4, 5].map((seed) =>
+      runSimulation("sweep", utilityPolicy, { ...DEFAULT_CONFIG, theta }, seed * 977)
+    );
+    const mean = (f: (r: SimResult) => number) =>
+      runs.reduce((a, r) => a + f(r), 0) / runs.length;
+    console.log(
+      [
+        theta.toFixed(2).padStart(6),
+        `${(mean((r) => r.durableRetention) * 100).toFixed(1)}%`.padStart(8),
+        `${(mean((r) => r.durableMin) * 100).toFixed(1)}%`.padStart(8),
+        mean((r) => r.lapses).toFixed(0).padStart(7),
+        `${mean((r) => r.meanTrueStability).toFixed(1)}d`.padStart(8),
+      ].join(" │ ")
+    );
+  }
   console.log(
-    "  Wasted   — sessions where R_true > 95% (too easy, no desirable difficulty)"
+    "\n  Mean S is the synthetic learner's true stability at the end. Where it stays\n" +
+      "  near its starting value, reviews are not accumulating and no scheduling\n" +
+      "  policy can rescue that — the target and the lapse penalty are the problem.\n"
+  );
+}
+
+/**
+ * §11: "Randomise ε (block granularity) across users; retention as outcome."
+ *
+ * ε is the sole control on how rapidly the scheduler interleaves, so sweeping it
+ * is a single-parameter manipulation of the central cross-domain claim. Running it
+ * in simulation first is the cheap version of the experiment — it cannot answer the
+ * question for humans, but it will show whether the mechanism does anything at all
+ * in a world where the memory model is exactly right.
+ */
+function printEpsilonSweep() {
+  console.log("\n" + "═".repeat(96));
+  console.log("  ε SWEEP — block granularity vs. retention (§11)");
+  console.log("═".repeat(96));
+  console.log(
+    "  ε is the only thing controlling how readily the scheduler switches. Small ε\n" +
+      "  interleaves rapidly; large ε holds long focused blocks.\n"
   );
   console.log(
-    "  Lapses   — sessions where R_true < 30% (too much forgetting, relearning)"
+    ["ε".padStart(6), "Durable".padStart(8), "D-min".padStart(8), "Switches".padStart(9), "Blocks".padStart(7)].join(" │ ")
   );
-  console.log();
+  console.log("─".repeat(48));
+
+  for (const epsilon of [0.01, 0.05, 0.1, 0.15, 0.3, 0.6, 1.0]) {
+    // Averaged over seeds: a single run's ordering is noise, and reporting one
+    // would invite reading a difference that isn't there.
+    const runs = [1, 2, 3, 4, 5].map((seed) =>
+      runSimulation("sweep", utilityPolicy, { ...DEFAULT_CONFIG, epsilon }, seed * 977)
+    );
+    const mean = (f: (r: SimResult) => number) =>
+      runs.reduce((a, r) => a + f(r), 0) / runs.length;
+
+    console.log(
+      [
+        epsilon.toFixed(2).padStart(6),
+        `${(mean((r) => r.durableRetention) * 100).toFixed(1)}%`.padStart(8),
+        `${(mean((r) => r.durableMin) * 100).toFixed(1)}%`.padStart(8),
+        mean((r) => r.switches).toFixed(0).padStart(9),
+        mean((r) => r.blocks).toFixed(0).padStart(7),
+      ].join(" │ ")
+    );
+  }
+  console.log(
+    "\n  Averaged over 5 seeds. This is a synthetic learner whose memory is exactly\n" +
+      "  the model's shape, so it cannot validate the model — only show whether the\n" +
+      "  granularity control does anything under ideal conditions.\n"
+  );
 }
 
 function writeCsv(results: SimResult[]) {
-  const lines: string[] = ["day," + results.map((r) => r.policy).join(",")];
+  const lines = ["day," + results.map((r) => r.policy).join(",")];
   for (let d = 0; d < SIM_DAYS; d++) {
-    lines.push(
-      d + "," + results.map((r) => r.dailyRetention[d].toFixed(4)).join(",")
-    );
+    lines.push(d + "," + results.map((r) => r.dailyRetention[d].toFixed(4)).join(","));
   }
-  const path = "scripts/results.csv";
-  fs.writeFileSync(path, lines.join("\n") + "\n");
-  console.log(`Daily retention CSV written to ${path}`);
+  fs.writeFileSync("scripts/results.csv", lines.join("\n") + "\n");
+  console.log("Daily retention written to scripts/results.csv");
 }
 
-// ─── Supabase Seed ───
-
-async function seedDatabase(sessions: SessionRecord[]) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    console.error(
-      "Error: Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local to seed."
-    );
-    console.error(
-      "The service role key bypasses RLS for seeding. Find it in Supabase → Settings → API."
-    );
-    process.exit(1);
-  }
-
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(url, serviceKey);
-
-  // Find or prompt for user
-  const {
-    data: { users },
-  } = await supabase.auth.admin.listUsers();
-  if (!users || users.length === 0) {
-    console.error("No users found. Sign up in the app first, then run --seed.");
-    process.exit(1);
-  }
-  const user = users[0];
-  console.log(`Seeding data for user: ${user.email} (${user.id})`);
-
-  // Clear existing data for this user (sessions first due to FK)
-  await supabase.from("sessions").delete().eq("user_id", user.id);
-  await supabase.from("sr_state").delete().in(
-    "skill_id",
-    (
-      (await supabase.from("skills").select("id").eq("user_id", user.id))
-        .data ?? []
-    ).map((s: { id: string }) => s.id)
-  );
-  await supabase.from("skills").delete().eq("user_id", user.id);
-  console.log("Cleared existing data.");
-
-  // Create skills
-  const skillIds = new Map<string, string>();
-  for (const config of SKILL_CONFIGS) {
-    const { data, error } = await supabase
-      .from("skills")
-      .insert({
-        user_id: user.id,
-        name: config.name,
-        description: `Sim skill (initial stability: ${config.initialStability}d)`,
-        default_session_minutes: 25,
-      })
-      .select("id")
-      .single();
-    if (error) {
-      console.error(`Failed to create skill ${config.name}:`, error.message);
-      process.exit(1);
-    }
-    skillIds.set(config.name, data.id);
-  }
-  console.log(`Created ${skillIds.size} skills.`);
-
-  // Insert sessions with back-dated timestamps
-  const baseDate = new Date();
-  baseDate.setDate(baseDate.getDate() - SIM_DAYS);
-
-  let inserted = 0;
-  for (const s of sessions) {
-    const sessionDate = new Date(
-      baseDate.getTime() + s.day * 86400000 + Math.random() * 43200000
-    );
-    const dueAt = new Date(
-      sessionDate.getTime() + s.sm2After.intervalDays * 86400000
-    );
-
-    const { error } = await supabase.from("sessions").insert({
-      user_id: user.id,
-      skill_id: skillIds.get(s.skillName)!,
-      started_at: sessionDate.toISOString(),
-      duration_minutes: 25,
-      quality: s.quality,
-      note: `Day ${s.day}: R_true=${(s.rTrue * 100).toFixed(0)}%`,
-      sm2_repetitions_before: s.sm2Before.repetitions,
-      sm2_ease_before: s.sm2Before.easeFactor,
-      sm2_interval_before: s.sm2Before.intervalDays,
-      sm2_repetitions_after: s.sm2After.repetitions,
-      sm2_ease_after: s.sm2After.easeFactor,
-      sm2_interval_after: s.sm2After.intervalDays,
-      due_at_after: dueAt.toISOString(),
-    });
-
-    if (error) {
-      console.error(`Failed to insert session day ${s.day}:`, error.message);
-    } else {
-      inserted++;
-    }
-  }
-  console.log(`Inserted ${inserted} sessions.`);
-
-  // Update sr_state to reflect final state from the last session per skill
-  for (const config of SKILL_CONFIGS) {
-    const skillSessions = sessions.filter((s) => s.skillName === config.name);
-    if (skillSessions.length === 0) continue;
-    const last = skillSessions[skillSessions.length - 1];
-    const lastDate = new Date(
-      baseDate.getTime() + last.day * 86400000 + 21600000
-    );
-    const dueAt = new Date(
-      lastDate.getTime() + last.sm2After.intervalDays * 86400000
-    );
-
-    await supabase
-      .from("sr_state")
-      .update({
-        repetitions: last.sm2After.repetitions,
-        ease_factor: last.sm2After.easeFactor,
-        interval_days: last.sm2After.intervalDays,
-        last_reviewed_at: lastDate.toISOString(),
-        due_at: dueAt.toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("skill_id", skillIds.get(config.name)!);
-  }
-  console.log(
-    "Updated sr_state to reflect final simulation state. Dashboard should now show populated data."
-  );
-}
-
-// ─── Main ───
-
-async function main() {
+function main() {
   const args = process.argv.slice(2);
-  const wantCsv = args.includes("--csv");
-  const wantSeed = args.includes("--seed");
 
-  const results: SimResult[] = [];
-  let retrievabilitySessions: SessionRecord[] = [];
-
-  for (const [name, policy] of Object.entries(POLICIES)) {
-    const { result, sessions } = runSimulation(name, policy, SKILL_CONFIGS);
-    results.push(result);
-    if (name === "Retrievability (interleave)") {
-      retrievabilitySessions = sessions;
-    }
+  if (args.includes("--epsilon")) {
+    printEpsilonSweep();
+    return;
   }
 
+  if (args.includes("--theta")) {
+    printThetaSweep();
+    return;
+  }
+
+  const policies: Array<[string, Policy]> = [
+    ["v1 utility (interleave)", utilityPolicy],
+    ["v1 utility, β=0 ablation", noFatiguePolicy],
+    ["Blocked", blockedPolicy],
+    ["Random", randomPolicy],
+    ["Round-robin", roundRobinPolicy],
+  ];
+
+  const results = policies.map(([name, p]) => runSimulation(name, p, DEFAULT_CONFIG));
   printTable(results);
-
-  if (wantCsv) {
-    writeCsv(results);
-  }
-
-  if (wantSeed) {
-    console.log(
-      "\nSeeding Supabase with retrievability policy session history..."
-    );
-    await seedDatabase(retrievabilitySessions);
-  }
+  if (args.includes("--csv")) writeCsv(results);
 }
 
-main().catch(console.error);
+main();
