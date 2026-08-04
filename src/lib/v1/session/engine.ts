@@ -5,11 +5,16 @@
  * however long it takes fatigue accumulation plus urgency drift to overcome ε."
  *
  * That sentence has a concrete consequence for the UI. There is no countdown, no
- * configured length, and nothing that ends a block on a clock. A block is a sequence
- * of prompted retrieval attempts; after each one the state advances (stability,
- * difficulty, channel saturation, recent-practice window) and the controller is
- * asked again. The switch prompt appears when — and only when — a rival skill beats
- * the incumbent by more than ε.
+ * configured length, and nothing that ends a block on a clock. A block is a pass
+ * over one skill's cue pool: each cue is served once, graded, and logged. When the
+ * pool is covered the skill's state advances (see below), the controller re-ranks,
+ * and the switch prompt appears when — and only when — a rival beats the incumbent
+ * by more than ε. A large ε keeps you on the same skill for another pass.
+ *
+ * Coverage is the checkpoint, not the decision. See `isBlockComplete` for why the
+ * utility comparison alone cannot terminate a block, and why this is a
+ * measurement-completeness condition rather than the block-duration parameter §7
+ * rules out.
  *
  * Kept as a pure module so the transition rules are testable without mounting a
  * component and without a database.
@@ -95,6 +100,8 @@ export interface SessionState {
   previousSkillId: string | null;
   /** Attempt counter per prompt within this session (§9.3 needs first attempts). */
   attemptCounts: Map<string, number>;
+  /** Cues served in the CURRENT block — drives isBlockComplete. */
+  servedThisBlock: Set<string>;
   /** Attempts already folded into a finished block, so a re-entered skill's
    *  earlier block is not aggregated twice. */
   settledAttemptIds: Set<string>;
@@ -122,7 +129,8 @@ export function rank(state: SessionState, deps: EngineDeps, at: Date): Ranking {
 }
 
 /**
- * Serves the next cue for the current skill.
+ * Serves the next cue for the current skill, preferring ones not yet seen in this
+ * block so a block covers the pool rather than resampling it.
  *
  * Returns null when the skill's pool is empty, which the caller must treat as "this
  * skill is no longer practisable" rather than silently continuing.
@@ -134,11 +142,44 @@ export function serveNextPrompt(
 ): RetrievalPrompt | null {
   if (!state.currentSkillId) return null;
   const pool = state.promptsBySkill.get(state.currentSkillId) ?? [];
-  const chosen = selectPrompt(pool, deps.rand);
+  const unseen = pool.filter((p) => !state.servedThisBlock.has(p.id));
+  const chosen = selectPrompt(unseen.length > 0 ? unseen : pool, deps.rand);
   if (!chosen) return null;
   state.currentPrompt = chosen;
   state.promptShownAt = at;
   return chosen;
+}
+
+/**
+ * Has this block covered the skill's cue pool?
+ *
+ * **This is what ends a block, and it has to be.** The utility comparison on its own
+ * cannot do it, for two reasons that only show up with realistic data:
+ *
+ *   - Every skill created by hand or carried over from before v1 has uniform channel
+ *     loadings, so `F_i` is identical across skills and `−β·F` cancels out of every
+ *     pairwise comparison. Fatigue cannot break a tie it applies equally to.
+ *   - Because a block deliberately does not advance the skill (see the module note),
+ *     the incumbent's `last_reviewed_at` stays frozen while the clock runs — so its
+ *     `R` keeps decaying, its urgency *rises*, and staying looks better the longer
+ *     you stay.
+ *
+ * Together those made the block unterminating: the learner could cycle the same
+ * cues indefinitely and never be offered a switch.
+ *
+ * Pool coverage is the honest terminator, and it is not a smuggled-in block-duration
+ * parameter. §7 rules out a *clock*; this is a measurement-completeness condition —
+ * the block ends when every cue has been sampled once, which is exactly when the
+ * aggregate becomes a fair summary of the skill. ε still decides what happens next:
+ * after the update, the controller re-ranks, and a large ε keeps you on the same
+ * skill for another pass while a small one moves you on. Session length stays
+ * emergent; it now has a defined checkpoint at which to emerge.
+ */
+export function isBlockComplete(state: SessionState): boolean {
+  if (!state.currentSkillId) return false;
+  const pool = state.promptsBySkill.get(state.currentSkillId) ?? [];
+  if (pool.length === 0) return true;
+  return pool.every((p) => state.servedThisBlock.has(p.id));
 }
 
 /**
@@ -201,6 +242,8 @@ export function recordAttempt(
 
   prompt.lastServedAt = at;
   prompt.timesServed += 1;
+
+  state.servedThisBlock.add(prompt.id);
 
   const attemptIndex = (state.attemptCounts.get(prompt.id) ?? 0) + 1;
   state.attemptCounts.set(prompt.id, attemptIndex);
@@ -296,6 +339,10 @@ export function finishBlock(
   skill.difficulty = next.difficulty;
   skill.lastReviewedAt = at;
 
+  // Staying on this skill begins a fresh pass over the pool rather than resuming a
+  // block that has already been settled and aggregated.
+  state.servedThisBlock.clear();
+
   void deps;
   return {
     skillId,
@@ -313,6 +360,9 @@ export function moveTo(state: SessionState, skillId: string, at: Date): void {
   state.currentSkillId = skillId;
   state.currentPrompt = null;
   state.promptShownAt = null;
+  // A new block starts with nothing covered — including when re-entering a skill
+  // practised earlier in the session.
+  state.servedThisBlock.clear();
   void at;
 }
 
@@ -336,6 +386,7 @@ export function createSessionState(
     currentSkillId: null,
     currentPrompt: null,
     promptShownAt: null,
+    servedThisBlock: new Set(),
     attempts: [],
     recentPractice: [],
     previousSkillId: null,
